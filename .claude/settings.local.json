@@ -1,0 +1,38 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git --version)",
+      "Bash(gh --version)",
+      "Bash(gh auth *)",
+      "Bash(git clone *)",
+      "Bash(git config *)",
+      "Bash(where git-credential-manager *)",
+      "Read(//c/Program Files/Git/**)",
+      "Bash(GCM_TRACE=1 git -c credential.helper=manager clone https://github.com/novavisionmediatek/reelspark.git .tmp_reelspark_clone2)",
+      "Bash(cd \"e:\\\\Rohit\\\\projects\\\\app\" && rm -rf .tmp_reelspark_clone .tmp_reelspark_clone2 && git clone https://github.com/rohitkr0000/reelspark.git .tmp_reelspark_clone 2>&1)",
+      "Bash(cd \"e:\\\\Rohit\\\\projects\\\\app\" && mv .tmp_reelspark_clone/.git . && mv .tmp_reelspark_clone/.gitignore . && mv .tmp_reelspark_clone/DESIGN_SYSTEM.md . && mv .tmp_reelspark_clone/PROJECT_PLAN.md . && mv .tmp_reelspark_clone/apps . && mv .tmp_reelspark_clone/package-lock.json . && mv .tmp_reelspark_clone/package.json . && mv .tmp_reelspark_clone/supabase . && mv .tmp_reelspark_clone/ui-kit.html . && rmdir .tmp_reelspark_clone && ls -la)",
+      "Bash(where node *)",
+      "Bash(where npm *)",
+      "Read(//c/Program Files/**)",
+      "Read(//c/Users/piyus/AppData/Roaming/**)",
+      "PowerShell(winget install OpenJS.NodeJS.LTS --accept-package-agreements --accept-source-agreements)",
+      "PowerShell(winget install --id OpenJS.NodeJS.LTS --source winget --accept-package-agreements --accept-source-agreements)",
+      "PowerShell($env:Path = [System.Environment]::GetEnvironmentVariable\\(\"Path\",\"Machine\"\\) + \";\" + [System.Environment]::GetEnvironmentVariable\\(\"Path\",\"User\"\\); node -v; npm -v)",
+      "PowerShell($env:Path = [System.Environment]::GetEnvironmentVariable\\(\"Path\",\"Machine\"\\) + \";\" + [System.Environment]::GetEnvironmentVariable\\(\"Path\",\"User\"\\); cd \"E:\\\\Rohit\\\\projects\\\\app\"; npm install)",
+      "Bash(echo \"exit: $?\")",
+      "PowerShell($env:Path = [System.Environment]::GetEnvironmentVariable\\(\"Path\",\"Machine\"\\) + \";\" + [System.Environment]::GetEnvironmentVariable\\(\"Path\",\"User\"\\); cd \"E:\\\\Rohit\\\\projects\\\\app\\\\apps\\\\mobile\"; npm install)",
+      "PowerShell($env:Path = [System.Environment]::GetEnvironmentVariable\\(\"Path\",\"Machine\"\\) + \";\" + [System.Environment]::GetEnvironmentVariable\\(\"Path\",\"User\"\\); cd \"E:\\\\Rohit\\\\projects\\\\app\"; npm run dev)",
+      "Bash(node -e ' *)",
+      "WebSearch",
+      "PowerShell($env:Path = [System.Environment]::GetEnvironmentVariable\\(\"Path\",\"Machine\"\\) + \";\" + [System.Environment]::GetEnvironmentVariable\\(\"Path\",\"User\"\\); cd \"E:\\\\Rohit\\\\projects\\\\app\\\\apps\\\\mobile\"; npx tsc --noEmit)",
+      "Bash(chromium-cli --help)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:5174/)",
+      "Bash(mkdir -p /tmp/pwcheck)",
+      "Read(//tmp/**)",
+      "Bash(npm init *)"
+    ],
+    "additionalDirectories": [
+      "e:\\Rohit\\projects\\app\\.tmp_reelspark_clone\\.git"
+    ]
+  }
+}

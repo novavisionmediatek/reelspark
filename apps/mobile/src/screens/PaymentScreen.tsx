@@ -1,17 +1,15 @@
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import * as ImagePicker from 'expo-image-picker';
 import { Feather } from '@expo/vector-icons';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { Button } from '../components/Button';
+import { TextField } from '../components/TextField';
+import { PaymentQrCode } from '../components/PaymentQrCode';
 import { useAuth } from '../lib/AuthProvider';
 import { useAppSettings } from '../hooks/useAppSettings';
-import {
-  useCreateRazorpayOrder,
-  useRegistrationPayment,
-  useVerifyRazorpayPayment,
-} from '../hooks/useRegistrationPayment';
-import { openRazorpayCheckout } from '../lib/razorpay';
+import { useRegistrationPayment, useSubmitRegistrationPayment } from '../hooks/useRegistrationPayment';
 import { colors, fonts, radius, spacing, type } from '../theme/tokens';
 import type { MainStackParamList } from '../navigation/types';
 
@@ -21,10 +19,11 @@ export function PaymentScreen({ navigation }: Props) {
   const { profile, refreshProfile } = useAuth();
   const { settings } = useAppSettings();
   const { data: payment, isLoading } = useRegistrationPayment();
-  const createOrder = useCreateRazorpayOrder();
-  const verifyPayment = useVerifyRazorpayPayment();
+  const submitPayment = useSubmitRegistrationPayment();
 
-  const [busy, setBusy] = useState(false);
+  const [utr, setUtr] = useState('');
+  const [screenshotUri, setScreenshotUri] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const fee = settings.registration_fee_inr;
@@ -35,23 +34,36 @@ export function PaymentScreen({ navigation }: Props) {
     if (payment?.status === 'approved' && status !== 'approved') refreshProfile();
   }, [payment?.status, status, refreshProfile]);
 
-  async function handlePay() {
-    setError(null);
-    setBusy(true);
+  async function handlePickScreenshot() {
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) return;
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      quality: 0.8,
+    });
+    if (!result.canceled && result.assets[0]) {
+      setScreenshotUri(result.assets[0].uri);
+    }
+  }
+
+  async function copyUpiId() {
     try {
-      const order = await createOrder.mutateAsync();
-      const result = await openRazorpayCheckout({
-        keyId: order.keyId,
-        orderId: order.orderId,
-        amount: order.amount,
-        currency: order.currency,
-        prefill: order.prefill,
-      });
-      await verifyPayment.mutateAsync(result);
+      await navigator.clipboard.writeText(settings.upi_id);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* clipboard unavailable */
+    }
+  }
+
+  async function handleSubmit() {
+    setError(null);
+    if (!utr.trim() || !screenshotUri) return;
+    try {
+      await submitPayment.mutateAsync({ utr: utr.trim(), screenshotUri });
     } catch (e) {
-      setError((e as Error)?.message ?? 'Payment could not be completed.');
-    } finally {
-      setBusy(false);
+      setError((e as Error)?.message ?? 'Could not submit your payment. Please try again.');
     }
   }
 
@@ -71,7 +83,7 @@ export function PaymentScreen({ navigation }: Props) {
     );
   }
 
-  // ---- submitted / pending (manual admin review only) ----------------
+  // ---- submitted / pending (manual admin review) ----------------------
   if (!isLoading && payment?.status === 'submitted') {
     return (
       <SafeAreaView style={styles.screen}>
@@ -81,7 +93,8 @@ export function PaymentScreen({ navigation }: Props) {
           </View>
           <Text style={styles.cardTitle}>Waiting for approval</Text>
           <Text style={styles.cardBody}>
-            We're confirming your ₹{payment.amount_inr} payment. This page updates automatically once it's done.
+            We're verifying your ₹{payment.amount_inr} payment (ref. {payment.upi_reference}). This page updates
+            automatically once an admin confirms it.
           </Text>
           <Button label="Back" variant="secondary" onPress={() => navigation.goBack()} style={{ marginTop: spacing.lg }} />
         </View>
@@ -89,9 +102,10 @@ export function PaymentScreen({ navigation }: Props) {
     );
   }
 
-  // ---- unpaid / rejected — show the pay screen -----------------------
+  // ---- unpaid / rejected — show the QR + proof form -------------------
   const rejected = payment?.status === 'rejected';
   const referred = !!profile?.referred_by;
+  const canSubmit = utr.trim().length > 0 && !!screenshotUri;
 
   return (
     <SafeAreaView style={styles.screen}>
@@ -99,8 +113,8 @@ export function PaymentScreen({ navigation }: Props) {
         <View style={styles.header}>
           <Text style={styles.title}>Complete registration</Text>
           <Text style={styles.subtitle}>
-            A one-time ₹{fee} fee unlocks video posting. Pay securely with Razorpay — UPI, cards, net banking and
-            wallets are all supported. Posting unlocks the moment your payment is confirmed.
+            A one-time ₹{fee} fee unlocks video posting. Scan the QR with any UPI app, then tell us your transaction
+            reference and attach a screenshot — an admin confirms it and posting unlocks right after.
           </Text>
         </View>
 
@@ -123,22 +137,45 @@ export function PaymentScreen({ navigation }: Props) {
           </View>
         ) : null}
 
-        <View style={styles.payCard}>
-          <Text style={styles.payLabel}>Registration fee</Text>
+        <View style={styles.qrCard}>
+          <Text style={styles.payLabel}>Scan to pay</Text>
           <Text style={styles.amount}>₹{fee}</Text>
-          <View style={styles.methodRow}>
-            <Feather name="lock" size={13} color={colors.textMuted} />
-            <Text style={styles.methodHint}>Secured by Razorpay</Text>
-          </View>
+          <PaymentQrCode upiId={settings.upi_id} payeeName={settings.upi_payee_name} amountInr={fee} />
+          <Pressable style={styles.upiRow} onPress={copyUpiId} hitSlop={8}>
+            <Text style={styles.upiId}>{settings.upi_id}</Text>
+            <Feather name={copied ? 'check' : 'copy'} size={14} color={copied ? colors.purple : colors.textMuted} />
+          </Pressable>
         </View>
 
-        {error ? <Text style={styles.error}>{error}</Text> : null}
+        <Text style={styles.label}>Transaction reference (UTR)</Text>
+        <TextField
+          value={utr}
+          onChangeText={setUtr}
+          placeholder="e.g. 402816734521"
+          autoCapitalize="characters"
+        />
+
+        <Text style={styles.label}>Payment screenshot</Text>
+        <Pressable style={styles.screenshotPicker} onPress={handlePickScreenshot}>
+          {screenshotUri ? (
+            <Image source={{ uri: screenshotUri }} style={styles.screenshotPreview} />
+          ) : (
+            <View style={styles.screenshotPlaceholder}>
+              <Feather name="image" size={20} color={colors.textMuted} />
+              <Text style={styles.screenshotHint}>Tap to attach a screenshot</Text>
+            </View>
+          )}
+        </Pressable>
+
+        {(error || submitPayment.isError) ? (
+          <Text style={styles.error}>{error ?? (submitPayment.error as Error)?.message}</Text>
+        ) : null}
 
         <Button
-          label={busy ? 'Processing…' : `Pay ₹${fee} with Razorpay`}
-          onPress={handlePay}
-          disabled={busy}
-          loading={busy}
+          label={submitPayment.isPending ? 'Submitting…' : 'Submit for verification'}
+          onPress={handleSubmit}
+          disabled={!canSubmit || submitPayment.isPending}
+          loading={submitPayment.isPending}
           style={{ marginTop: spacing.lg }}
         />
         <Button label="Cancel" variant="ghost" onPress={() => navigation.goBack()} />
@@ -159,23 +196,44 @@ const styles = StyleSheet.create({
   cardTitle: { ...type.h3, color: colors.text, textAlign: 'center' },
   cardBody: { ...type.bodySmall, color: colors.textMuted, textAlign: 'center', maxWidth: 320 },
 
-  payCard: {
+  qrCard: {
     backgroundColor: colors.surface,
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: radius.xl,
     padding: spacing.xl,
     alignItems: 'center',
-    gap: spacing.xs,
+    gap: spacing.md,
+    marginBottom: spacing.lg,
   },
   payLabel: {
     ...type.label,
     color: colors.textMuted,
     textTransform: 'uppercase',
   },
-  amount: { fontFamily: fonts.monoSemibold, fontSize: 32, color: colors.text, marginVertical: spacing.xs },
-  methodRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  methodHint: { fontFamily: fonts.body, fontSize: 11, color: colors.textMuted },
+  amount: { fontFamily: fonts.monoSemibold, fontSize: 32, color: colors.text, marginTop: -spacing.xs },
+  upiRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
+  upiId: { fontFamily: fonts.mono, fontSize: 13, color: colors.text },
+
+  label: {
+    ...type.label,
+    color: colors.textMuted,
+    textTransform: 'uppercase',
+    marginBottom: spacing.xs,
+    marginTop: spacing.sm,
+  },
+
+  screenshotPicker: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderStyle: 'dashed',
+    borderRadius: radius.md,
+    overflow: 'hidden',
+    backgroundColor: colors.surface,
+  },
+  screenshotPlaceholder: { alignItems: 'center', justifyContent: 'center', gap: spacing.xs, paddingVertical: spacing['2xl'] },
+  screenshotHint: { ...type.bodySmall, color: colors.textMuted },
+  screenshotPreview: { width: '100%', height: 220, resizeMode: 'contain', backgroundColor: colors.background },
 
   error: { ...type.bodySmall, color: colors.coral, marginTop: spacing.sm },
 

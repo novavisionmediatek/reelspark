@@ -1,8 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase';
-import { callEdgeFunction } from '../lib/edge';
 import { useAuth } from '../lib/AuthProvider';
-import type { RazorpaySuccess } from '../lib/razorpay';
 import type { RegistrationPayment } from '../types/database';
 
 // The current user's most recent registration payment attempt. While it's still
@@ -16,7 +14,7 @@ export function useRegistrationPayment() {
     enabled: !!userId,
     refetchInterval: (query) => {
       const status = (query.state.data as RegistrationPayment | null)?.status;
-      return status === 'submitted' || status === 'created' ? 15000 : false;
+      return status === 'submitted' ? 15000 : false;
     },
     queryFn: async () => {
       const { data, error } = await supabase
@@ -32,30 +30,38 @@ export function useRegistrationPayment() {
   });
 }
 
-interface CreateOrderResult {
-  orderId: string;
-  amount: number;
-  currency: string;
-  keyId: string;
-  prefill?: { name?: string; email?: string };
+interface SubmitPaymentInput {
+  utr: string;
+  screenshotUri: string;
 }
 
-// Ask the edge function to create a Razorpay order for the registration fee.
-export function useCreateRazorpayOrder() {
-  return useMutation({
-    mutationFn: () => callEdgeFunction<CreateOrderResult>('razorpay-create-order', {}),
-  });
-}
-
-// Hand the signed Razorpay response back to the edge function for verification.
-// On success the caller's profile is flipped to `approved`.
-export function useVerifyRazorpayPayment() {
+// Uploads the payment screenshot to the private `payment-proofs` bucket, then
+// records the UTR + screenshot for admin review via `submit_registration_payment`.
+export function useSubmitRegistrationPayment() {
   const queryClient = useQueryClient();
   const { session, refreshProfile } = useAuth();
 
   return useMutation({
-    mutationFn: (payload: RazorpaySuccess) =>
-      callEdgeFunction<{ status: string }>('razorpay-verify-payment', payload),
+    mutationFn: async ({ utr, screenshotUri }: SubmitPaymentInput) => {
+      const userId = session?.user.id;
+      if (!userId) throw new Error('Not logged in.');
+
+      const response = await fetch(screenshotUri);
+      const arrayBuffer = await response.arrayBuffer();
+      const path = `${userId}/${Date.now()}.jpg`;
+
+      const { error: uploadError } = await supabase.storage
+        .from('payment-proofs')
+        .upload(path, arrayBuffer, { contentType: 'image/jpeg' });
+      if (uploadError) throw uploadError;
+
+      const { data, error } = await supabase.rpc('submit_registration_payment', {
+        p_upi_reference: utr,
+        p_screenshot_path: path,
+      });
+      if (error) throw error;
+      return data as RegistrationPayment;
+    },
     onSuccess: async () => {
       await refreshProfile();
       queryClient.invalidateQueries({ queryKey: ['registrationPayment', session?.user.id] });

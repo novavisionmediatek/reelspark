@@ -44,15 +44,26 @@ interface FeedItemProps {
   itemHeight: number;
   // Desktop shows a "scroll / arrow keys" hint instead of the swipe hint.
   desktop: boolean;
+  // YouTube only — shared across every item so unmuting once keeps sound on
+  // for the rest of the feed. Lifted to FeedScreen so it's a single source
+  // of truth instead of resetting per item.
+  soundOn: boolean;
+  onToggleSound: () => void;
 }
 
-function FeedItem({ video, isActive, itemHeight, desktop }: FeedItemProps) {
+function FeedItem({ video, isActive, itemHeight, desktop, soundOn, onToggleSound }: FeedItemProps) {
   // Instagram's /embed/ is a cross-origin iframe: it can't autoplay and we can't
   // script it or hide its centre play button. So we just mount the reel as soon
   // as it's the active item and let the viewer tap IG's own button once to
   // start it — no app poster, no app play button, no chrome layered on top.
   const isInstagram = video.platform === 'instagram';
   const [playing, setPlaying] = useState(false);
+  // YouTube only: flips true once the embed actually confirms a PLAYING state
+  // (not just "mounted") — mounting starts instantly, but the iframe itself
+  // still takes a beat to load, during which YouTube shows its own poster +
+  // branded play button. Our nicer blurred poster stays layered on top of the
+  // iframe (masking that flash) until this fires, then steps aside.
+  const [started, setStarted] = useState(false);
   const [views, setViews] = useState(video.view_count_in_app);
   const [gradientFrom, gradientTo] = gradientFor(video.id);
   const countedView = useRef(false);
@@ -60,22 +71,26 @@ function FeedItem({ video, isActive, itemHeight, desktop }: FeedItemProps) {
   const countView = useCallback(() => {
     if (countedView.current) return;
     countedView.current = true;
-    setViews((v) => v + 1);
-    incrementViewCount(video.id);
+    // The server dedupes by (video, viewer): only bump the shown count if this
+    // is a genuinely new view for this user, not a re-watch.
+    incrementViewCount(video.id).then((isNewView) => {
+      if (isNewView) setViews((v) => v + 1);
+    });
   }, [video.id]);
 
-  // Stop playback as soon as the item scrolls out of view.
+  // Autoplay: start as soon as the item scrolls into view, stop as soon as it
+  // scrolls out. A manual pause (tap while active) isn't overridden by this,
+  // since it only re-runs when `isActive` itself flips.
   useEffect(() => {
-    if (!isActive && playing) {
-      setPlaying(false);
-    }
-  }, [isActive, playing]);
+    setPlaying(isActive);
+    if (!isActive) setStarted(false);
+  }, [isActive]);
 
-  // For IG the reel is "playing" (mounted) whenever it's active — count the view
-  // when it scrolls in, since we can't observe the tap inside IG's iframe.
+  // Count the view as soon as the item scrolls in and starts autoplaying — for
+  // IG we also can't observe the tap inside its cross-origin iframe.
   useEffect(() => {
-    if (isInstagram && isActive) countView();
-  }, [isInstagram, isActive, countView]);
+    if (isActive) countView();
+  }, [isActive, countView]);
 
   const togglePlay = useCallback(() => {
     setPlaying((p) => {
@@ -88,10 +103,16 @@ function FeedItem({ video, isActive, itemHeight, desktop }: FeedItemProps) {
     setPlaying(false);
   }, []);
 
+  const handleStarted = useCallback(() => setStarted(true), []);
+
   // YouTube: our poster + tap-to-play. Instagram: the reel (IG's own iframe, with
   // IG's own poster + button) is mounted whenever the item is active.
   const showReel = isInstagram ? isActive : isActive && playing;
-  const showChrome = !showReel;
+  // Whether OUR chrome (poster/dim/"For You") should mask the player. For
+  // Instagram this is just "not active" (no app poster ever, per above). For
+  // YouTube it stays masked through the mount+load window, only clearing once
+  // `started` confirms real video frames are on screen.
+  const showChrome = isInstagram ? !showReel : !started;
 
   const initials = (video.author_name ?? '??').slice(0, 2).toUpperCase();
 
@@ -104,10 +125,25 @@ function FeedItem({ video, isActive, itemHeight, desktop }: FeedItemProps) {
         style={StyleSheet.absoluteFill}
       />
 
-      {/* Poster art while stopped. Raw <img> (react-native-web's <Image> doesn't
-          reliably honor resizeMode here, and this is a web-only build). It's
-          blurred + scaled as a soft backdrop — a given video's poster frame can
-          be anything (e.g. a white screen-share), so we don't show it sharp. */}
+      {/* The actual player. Mounts (and starts loading/autoplaying) the instant
+          the item is active, underneath our poster below — see `showChrome`. */}
+      <VideoPlayer
+        platform={video.platform}
+        videoId={video.platform_video_id}
+        playing={showReel}
+        muted={!soundOn}
+        onEnded={handleEnded}
+        onStarted={isInstagram ? undefined : handleStarted}
+        style={styles.playerFill}
+      />
+
+      {/* Poster art, layered ON TOP of the player (after it in DOM order) so it
+          masks YouTube's own loading poster/play-button flash while the iframe
+          loads — see `showChrome`. Raw <img> (react-native-web's <Image>
+          doesn't reliably honor resizeMode here, and this is a web-only
+          build). It's blurred + scaled as a soft backdrop — a given video's
+          poster frame can be anything (e.g. a white screen-share), so we don't
+          show it sharp. */}
       {showChrome && video.thumbnail_url ? (
         <img
           src={bestYtThumbnail(video.thumbnail_url) ?? video.thumbnail_url}
@@ -131,16 +167,7 @@ function FeedItem({ video, isActive, itemHeight, desktop }: FeedItemProps) {
         />
       ) : null}
 
-      {/* The actual player. YouTube mounts on play; Instagram mounts while active. */}
-      <VideoPlayer
-        platform={video.platform}
-        videoId={video.platform_video_id}
-        playing={showReel}
-        onEnded={handleEnded}
-        style={styles.playerFill}
-      />
-
-      {/* Stopped-state only: full dim + top scrim + "For You" tag. */}
+      {/* Stopped/loading-state only: full dim + top scrim + "For You" tag. */}
       {showChrome ? (
         <>
           <View style={styles.posterScrim} pointerEvents="none" />
@@ -157,9 +184,11 @@ function FeedItem({ video, isActive, itemHeight, desktop }: FeedItemProps) {
         pointerEvents="none"
       />
 
-      {/* No app play button. YouTube: tap anywhere on the stopped reel to start
-          it (the player's own tap layer then toggles play/pause). Instagram: the
-          reel is already mounted, so the single tap lands on IG's own control. */}
+      {/* No app play button. YouTube autoplays on scroll-in; this fallback only
+          shows if that autoplay got blocked (e.g. no user gesture yet), and the
+          player's own tap layer handles pause/resume once it's running.
+          Instagram: the reel is already mounted, so the single tap lands on
+          IG's own control. */}
       {showChrome && !isInstagram ? (
         <Pressable style={StyleSheet.absoluteFill} onPress={togglePlay} accessibilityLabel="Play video" />
       ) : null}
@@ -174,6 +203,15 @@ function FeedItem({ video, isActive, itemHeight, desktop }: FeedItemProps) {
         <Pressable style={styles.railBtn} accessibilityLabel="Share video">
           <Feather name="share-2" size={18} color="#fff" />
         </Pressable>
+        {/* YouTube only — every reel autoplays muted (browsers block
+            autoplay-with-sound with no prior gesture); this turns sound on for
+            the current and all future reels. Instagram's own iframe audio
+            isn't reachable from here, so the toggle is hidden for it. */}
+        {!isInstagram ? (
+          <Pressable style={styles.railBtn} accessibilityLabel={soundOn ? 'Mute video' : 'Unmute video'} onPress={onToggleSound}>
+            <Feather name={soundOn ? 'volume-2' : 'volume-x'} size={18} color="#fff" />
+          </Pressable>
+        ) : null}
         <View style={styles.railCount}>
           <Text style={styles.railCountNumber}>{views}</Text>
           <Text style={styles.railCountLabel}>views</Text>
@@ -197,10 +235,33 @@ function FeedItem({ video, isActive, itemHeight, desktop }: FeedItemProps) {
   );
 }
 
+const SOUND_PREF_KEY = 'reelspark:feedSoundOn';
+
 export function FeedScreen() {
   const { data, isLoading, isError, fetchNextPage, hasNextPage, isFetchingNextPage } = useFeed();
   const { feedDesktop } = useResponsive();
   const isFocused = useIsFocused();
+
+  // Shared across every reel: unmuting once keeps sound on as you keep
+  // scrolling, and the choice survives a reload.
+  const [soundOn, setSoundOn] = useState(() => {
+    try {
+      return localStorage.getItem(SOUND_PREF_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
+  const toggleSound = useCallback(() => {
+    setSoundOn((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem(SOUND_PREF_KEY, next ? '1' : '0');
+      } catch {
+        /* storage unavailable — keep the in-memory value for this session */
+      }
+      return next;
+    });
+  }, []);
 
   // Each feed item is exactly as tall as the visible feed area (the scene minus
   // the bottom tab bar, or the full height beside the left rail). Seeded from the
@@ -298,9 +359,19 @@ export function FeedScreen() {
 
   const renderItem = useCallback(
     ({ item }: { item: Video }) => (
-      <FeedItem video={item} isActive={item.id === activeId} itemHeight={cardHeight} desktop={feedDesktop} />
+      <FeedItem
+        video={item}
+        // Tab navigators keep this screen mounted when another tab is on top,
+        // so gate on focus too — otherwise the active reel keeps autoplaying
+        // (and counting views) in the background after navigating away.
+        isActive={isFocused && item.id === activeId}
+        itemHeight={cardHeight}
+        desktop={feedDesktop}
+        soundOn={soundOn}
+        onToggleSound={toggleSound}
+      />
     ),
-    [activeId, cardHeight, feedDesktop],
+    [activeId, cardHeight, feedDesktop, soundOn, toggleSound, isFocused],
   );
 
   if (isLoading) {

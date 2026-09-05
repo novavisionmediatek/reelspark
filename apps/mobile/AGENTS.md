@@ -38,9 +38,16 @@ desktop `≥1024`, wide `≥1440`.
   YouTube's embed player cover-fit the clip: a true Short fills the frame with no
   crop, a landscape clip centre-crops to fill it. (Sizing the player as a 16:9
   box wider than the frame — the previous approach — made YouTube cover-fit a
-  vertical Short to that over-wide box and zoom ~3x, cropping the Short away.) There is **no app play button**: for YouTube,
-  a full-bleed `Pressable` over the paused poster starts the reel (tap again while
-  playing pauses it, via the embed's `#tap` layer); the paused poster is a raw
+  vertical Short to that over-wide box and zoom ~3x, cropping the Short away.)
+  **Autoplay:** `FeedItem` sets `playing = isActive` (`FeedScreen.tsx`), so a
+  YouTube reel starts as soon as it scrolls into view (`autoplay: 1` +
+  `playVideo()` in `onReady`, `youtubeEmbedHtml.ts`) and stops as soon as it
+  scrolls out — no tap needed. There is **no app play button**: a full-bleed
+  `Pressable` over the poster is only a fallback for when autoplay gets
+  blocked (e.g. the browser hasn't seen a user gesture yet); once running, tapping
+  the reel itself pauses/resumes it via the embed's `#tap` layer, which does
+  **not** re-trigger the `isActive` effect, so a manual pause sticks until the
+  item scrolls out and back in. The paused poster is a raw
   `<img>` (RNW `<Image>` ignores `resizeMode` here) using YouTube's 9:16
   `oardefault.jpg` (`lib/ytThumb.ts`), heavily blurred + darkened as a backdrop.
   The creator/caption row, the action rail (flag/share/views) and the bottom
@@ -71,6 +78,20 @@ desktop `≥1024`, wide `≥1440`.
   and IG's centre **"Watch again on Instagram"** replay card after a reel ends is
   likewise inside IG's cross-origin iframe and can't be removed from our side —
   only playing the raw `.mp4` avoids it.
+- **View counting:** `view_count_in_app` (on `videos`) is bumped through the
+  `increment_view_count` RPC (`supabase/migrations/0009_dedupe_video_views.sql`),
+  which is deduped server-side, not client-side — it inserts a
+  `(video_id, viewer_id)` row into `video_views` (PK, so a repeat call is a
+  no-op) and only increments the counter when that insert actually happened,
+  returning whether it did. `FeedItem`'s `countedView` ref (`FeedScreen.tsx`)
+  just guards against firing the RPC twice within one mount; the real
+  once-per-user guarantee (across sessions, reloads, re-scrolling past an item)
+  is the DB unique constraint. The client only bumps the on-screen count
+  optimistically when the RPC reports a new view, so a re-watch doesn't show a
+  bogus increment. There is intentionally no mechanism to push in-app view
+  counts back to YouTube/Instagram's own view counts — neither platform
+  exposes an API to increment another video's view count, and there isn't one
+  to build against.
 - **My Videos:** `FlatList` `numColumns` = `useResponsive().gridColumns` (1 → 4).
 - **Form / content screens** (auth, Submit, Edit/Profile): the root `screen` style
   gets `maxWidth` + `alignSelf: 'center'` so content stays a readable column.
@@ -78,24 +99,30 @@ desktop `≥1024`, wide `≥1440`.
 ## Paid registration + referrals
 
 DB: `supabase/migrations/0006_registration_payments_referrals.sql` +
-`0007_razorpay_payments.sql` (run both in the SQL Editor). `profiles.payment_status`
-(`unpaid|submitted|approved|rejected`) gates `videos` inserts via the
-`check_can_post` trigger; `MainStackNavigator` wraps the tabs so `PaymentScreen`
-can be pushed over browse-only tabs. `SubmitScreen` shows `<PaymentGate>` until
-`payment_status === 'approved'`.
+`0010_manual_upi_payments.sql` (0007/0008/0009 also apply in between — run in
+order). `profiles.payment_status` (`unpaid|submitted|approved|rejected`) gates
+`videos` inserts via the `check_can_post` trigger; `MainStackNavigator` wraps
+the tabs so `PaymentScreen` can be pushed over browse-only tabs. `SubmitScreen`
+shows `<PaymentGate>` until `payment_status === 'approved'`.
 
-Payment is **Razorpay Checkout**. `checkout.js` is loaded in `index.html`;
-`src/lib/razorpay.ts` wraps `window.Razorpay` in a promise. Flow: `PaymentScreen`
-→ `razorpay-create-order` edge function (creates the Razorpay order + a `created`
-`registration_payments` row via `start_razorpay_payment`) → widget → on success
-`razorpay-verify-payment` edge function recomputes the HMAC-SHA256 signature and,
-if valid, calls `confirm_razorpay_payment` (service role) which flips the row +
-profile to `approved` and credits the referrer `app_settings.referral_bonus_inr`.
-Edge function secrets: `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`
-(`supabase/functions/.env.example`); the publishable key id is also mirrored in
-`app_settings.razorpay_key_id`, editable from the admin **Settings** page. Admin
-**Payments** is now inspect-only (manual approve/reject stays for disputes).
-`useRegistrationPayment` polls while `created`/`submitted`. Referral code entered at sign-up
+Payment is **manual UPI**, not a payment gateway: `PaymentScreen` renders a
+`upi://pay?pa=<upi_id>&pn=<payee>&am=<fee>&cu=INR` QR (`PaymentQrCode.tsx`,
+generated client-side with the `qrcode` package — a data URI, not a stored
+image, so it always reflects the live `app_settings.upi_id`/`upi_payee_name`)
+plus the UPI ID as copyable text. The user pays with any UPI app, then enters
+their UTR/transaction reference and attaches a screenshot (`expo-image-picker`
+shim); submitting uploads the screenshot to the private `payment-proofs`
+storage bucket (`<user_id>/<timestamp>.jpg`) and calls
+`submit_registration_payment(p_upi_reference, p_screenshot_path)`, which
+requires both and flips the row + profile to `submitted`. An admin reviews it
+on the admin **Payments** page (screenshot shown via a signed URL) and calls
+`approve_registration_payment` / `reject_registration_payment`; approval
+credits the referrer `app_settings.referral_bonus_inr` once per payment.
+`useRegistrationPayment` polls while `submitted`. There is no automatic
+approval path — a payment is only ever approved by an admin looking at the
+UTR and screenshot. (An earlier iteration used Razorpay Checkout for
+automatic verification; 0010 reverted it because the product now wants manual
+UTR + screenshot review instead.) Referral code entered at sign-up
 (`options.data.referral_code`); balance shown on `ProfileScreen`. The Profile card
 shares an invite link `<origin>/?ref=CODE`; `src/lib/referral.ts` lifts `?ref=` on
 app start (`App.tsx`) into `sessionStorage`, `AuthNavigator` then opens on `SignUp`

@@ -41,9 +41,18 @@ const MASK_TOP_OPAQUE_PX = 58;
 const MASK_BOTTOM_HEIGHT_PX = 140;
 const MASK_BOTTOM_OPAQUE_PX = 78;
 
-export function youtubeEmbedHtml(videoId: string, origin: string = YT_EMBED_ORIGIN) {
+// Browsers only allow autoplay-with-sound after the page has already seen a
+// user gesture; muted autoplay is unconditionally allowed everywhere. So every
+// reel mounts muted by default (`initialMuted`) via an explicit `mute()` call
+// in `onReady` before `playVideo()` — there is no real `mute` playerVar, so
+// baking it into `playerVars` (a past bug here) is silently ignored and
+// autoplay stays blocked. The app's speaker toggle then mutes/unmutes the
+// live player over postMessage instead of touching this initial value again
+// (which would mean regenerating the srcDoc and reloading the iframe).
+export function youtubeEmbedHtml(videoId: string, origin: string = YT_EMBED_ORIGIN, initialMuted = true) {
   const safeId = String(videoId).replace(/[^a-zA-Z0-9_-]/g, '');
   const safeOrigin = /^https?:\/\/[^"'\s]+$/.test(origin) ? origin : YT_EMBED_ORIGIN;
+  const mute = initialMuted ? 1 : 0;
   return `<!DOCTYPE html>
 <html>
 <head>
@@ -106,6 +115,16 @@ export function youtubeEmbedHtml(videoId: string, origin: string = YT_EMBED_ORIG
     else player.playVideo();
   });
 
+  // Live sound toggle from the host page, so switching it doesn't reload the
+  // iframe (which would restart the clip). Queued if the player isn't ready yet.
+  var pendingMuted = null;
+  window.addEventListener('message', function (e) {
+    if (e.data !== 'mute' && e.data !== 'unmute') return;
+    var shouldMute = e.data === 'mute';
+    if (!player || typeof player.mute !== 'function') { pendingMuted = shouldMute; return; }
+    try { shouldMute ? player.mute() : player.unMute(); } catch (err) {}
+  });
+
   // Force subtitles/CC off. cc_load_policy alone is not enough — if the viewer's
   // YouTube account has captions switched on globally, or the video carries a
   // forced track, they still burn in. Unloading the caption modules (once they
@@ -134,11 +153,23 @@ export function youtubeEmbedHtml(videoId: string, origin: string = YT_EMBED_ORIG
       events: {
         onReady: function (e) {
           killCaptions(e.target);
+          // \`mute\` isn't an actual documented playerVar — it's silently
+          // ignored, so the only reliable way to mute before playback is an
+          // explicit mute()/unMute() call here, before playVideo(). Without
+          // this, unmuted autoplay gets blocked by the browser and the
+          // player just sits cued, never reaching PLAYING.
+          var shouldMute = pendingMuted !== null ? pendingMuted : !!(${mute});
+          try { shouldMute ? e.target.mute() : e.target.unMute(); } catch (err) {}
+          pendingMuted = null;
           try { e.target.playVideo(); } catch (err) {}
         },
         onApiChange: function (e) { killCaptions(e.target); },
         onStateChange: function (e) {
-          if (e.data === YT.PlayerState.PLAYING) { isPlaying = true; killCaptions(player); }
+          if (e.data === YT.PlayerState.PLAYING) {
+            if (!isPlaying) post('playing');
+            isPlaying = true;
+            killCaptions(player);
+          }
           else if (e.data === YT.PlayerState.PAUSED) { isPlaying = false; }
           else if (e.data === YT.PlayerState.ENDED) { isPlaying = false; post('ended'); }
         },

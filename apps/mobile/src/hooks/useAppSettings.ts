@@ -7,7 +7,8 @@ const FALLBACK: AppSettings = {
   registration_fee_inr: 300,
   referral_bonus_inr: 50,
   min_referral_withdrawal_inr: 150,
-  razorpay_key_id: '',
+  upi_id: '',
+  upi_payee_name: 'ReelSpark',
   updated_at: '',
 };
 

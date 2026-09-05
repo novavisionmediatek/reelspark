@@ -25,6 +25,14 @@ export function useFeed() {
   });
 }
 
-export async function incrementViewCount(videoId: string) {
-  await supabase.rpc('increment_view_count', { p_video_id: videoId });
+// Returns true if this call counted a genuinely new view (i.e. this user
+// hasn't watched this video before) so callers can skip an optimistic UI bump
+// for repeat viewers.
+export async function incrementViewCount(videoId: string): Promise<boolean> {
+  const { data, error } = await supabase.rpc('increment_view_count', { p_video_id: videoId });
+  if (error) {
+    console.warn('incrementViewCount failed', error);
+    return false;
+  }
+  return Boolean(data);
 }
