@@ -29,7 +29,9 @@
       "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:5174/)",
       "Bash(mkdir -p /tmp/pwcheck)",
       "Read(//tmp/**)",
-      "Bash(npm init *)"
+      "Bash(npm init *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)"
     ],
     "additionalDirectories": [
       "e:\\Rohit\\projects\\app\\.tmp_reelspark_clone\\.git"
