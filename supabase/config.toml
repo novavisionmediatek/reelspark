@@ -1,11 +1,2 @@
 # Minimal Supabase CLI config. `project_id` is the project ref the CLI links to.
 project_id = "gjaetfqanqnpwajxryrt"
-
-# The Razorpay functions are called from the browser, so the CORS preflight
-# (an unauthenticated OPTIONS request) must be allowed through. The functions
-# still verify the user's JWT internally via auth.getUser().
-[functions.razorpay-create-order]
-verify_jwt = false
-
-[functions.razorpay-verify-payment]
-verify_jwt = false

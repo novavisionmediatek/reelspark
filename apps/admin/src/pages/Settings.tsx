@@ -20,7 +20,8 @@ function RegistrationSettings() {
   const [fee, setFee] = useState('300');
   const [bonus, setBonus] = useState('50');
   const [minWithdrawal, setMinWithdrawal] = useState('150');
-  const [razorpayKeyId, setRazorpayKeyId] = useState('');
+  const [upiId, setUpiId] = useState('');
+  const [upiPayeeName, setUpiPayeeName] = useState('');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
@@ -29,7 +30,8 @@ function RegistrationSettings() {
     setFee(String(data.registration_fee_inr));
     setBonus(String(data.referral_bonus_inr));
     setMinWithdrawal(String(data.min_referral_withdrawal_inr ?? 150));
-    setRazorpayKeyId(data.razorpay_key_id ?? '');
+    setUpiId(data.upi_id ?? '');
+    setUpiPayeeName(data.upi_payee_name ?? '');
   }, [data]);
 
   async function handleSave(e: FormEvent) {
@@ -42,7 +44,8 @@ function RegistrationSettings() {
         registration_fee_inr: Math.max(0, parseInt(fee, 10) || 0),
         referral_bonus_inr: Math.max(0, parseInt(bonus, 10) || 0),
         min_referral_withdrawal_inr: Math.max(0, parseInt(minWithdrawal, 10) || 0),
-        razorpay_key_id: razorpayKeyId.trim(),
+        upi_id: upiId.trim(),
+        upi_payee_name: upiPayeeName.trim(),
       })
       .eq('id', true);
     setBusy(false);
@@ -60,9 +63,9 @@ function RegistrationSettings() {
     <section className={SECTION}>
       <h2 className="font-medium text-sm mb-1">Registration &amp; referral</h2>
       <p className="text-text-muted text-xs mb-4">
-        The one-time fee new users pay, the bonus a referrer earns when their invitee is approved, and the
-        publishable Razorpay Key ID used by the checkout. The matching key secret lives only in the
-        <code className="mx-1">razorpay-*</code> edge function secrets.
+        The one-time fee new users pay, the bonus a referrer earns when their invitee is approved, and the UPI ID the
+        app's payment QR code and text both point to. Users pay this directly and submit a UTR + screenshot for you
+        to verify on the Payments page.
       </p>
       <form onSubmit={handleSave} className="space-y-3">
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -85,14 +88,25 @@ function RegistrationSettings() {
             />
           </div>
         </div>
-        <div>
-          <label className="block text-xs text-text-muted mb-1">Razorpay Key ID</label>
-          <input
-            value={razorpayKeyId}
-            onChange={(e) => setRazorpayKeyId(e.target.value)}
-            placeholder="rzp_live_xxxxxxxxxxxxxx"
-            className={field}
-          />
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label className="block text-xs text-text-muted mb-1">UPI ID</label>
+            <input
+              value={upiId}
+              onChange={(e) => setUpiId(e.target.value)}
+              placeholder="yourname@okhdfcbank"
+              className={field}
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-text-muted mb-1">UPI payee name</label>
+            <input
+              value={upiPayeeName}
+              onChange={(e) => setUpiPayeeName(e.target.value)}
+              placeholder="ReelSpark"
+              className={field}
+            />
+          </div>
         </div>
         {msg && <p className={`text-sm ${msg.ok ? 'text-purple-300' : 'text-coral'}`}>{msg.text}</p>}
         <button

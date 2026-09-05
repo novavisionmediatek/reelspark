@@ -2,7 +2,7 @@ export type Platform = 'youtube' | 'instagram';
 export type VideoStatus = 'pending' | 'approved' | 'rejected' | 'flagged';
 export type ReportStatus = 'open' | 'reviewed' | 'dismissed';
 export type PaymentStatus = 'unpaid' | 'submitted' | 'approved' | 'rejected';
-export type RegistrationPaymentStatus = 'created' | 'submitted' | 'approved' | 'rejected';
+export type RegistrationPaymentStatus = 'submitted' | 'approved' | 'rejected';
 export type ReferralWithdrawalStatus = 'paid' | 'failed' | 'reversed';
 
 export interface Profile {
@@ -30,9 +30,8 @@ export interface RegistrationPayment {
   id: string;
   user_id: string;
   amount_inr: number;
-  razorpay_order_id: string | null;
-  razorpay_payment_id: string | null;
-  razorpay_signature: string | null;
+  upi_reference: string | null;
+  screenshot_path: string | null;
   status: RegistrationPaymentStatus;
   reviewed_by: string | null;
   reviewed_at: string | null;
@@ -73,7 +72,8 @@ export interface AppSettings {
   registration_fee_inr: number;
   referral_bonus_inr: number;
   min_referral_withdrawal_inr: number;
-  razorpay_key_id: string;
+  upi_id: string;
+  upi_payee_name: string;
   updated_at: string;
 }
 
