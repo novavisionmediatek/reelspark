@@ -14,12 +14,13 @@ import { useIsFocused } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
 import { Avatar } from '../components/Avatar';
+import { CommentsSheet } from '../components/CommentsSheet';
 import { PlatformChip } from '../components/PlatformChip';
 import { VideoPlayer } from '../components/VideoPlayer';
 import { colors, fonts, radius, spacing } from '../theme/tokens';
 import { useResponsive } from '../theme/responsive';
 import { bestYtThumbnail, ytThumbnailFallback } from '../lib/ytThumb';
-import { useFeed, incrementViewCount } from '../hooks/useFeed';
+import { useFeed, incrementViewCount, toggleVideoLike } from '../hooks/useFeed';
 import type { Video } from '../types/database';
 
 // Deterministic-looking placeholder gradient per video, shown behind the player
@@ -68,6 +69,50 @@ function FeedItem({ video, isActive, itemHeight, desktop, soundOn, onToggleSound
   const [gradientFrom, gradientTo] = gradientFor(video.id);
   const countedView = useRef(false);
 
+  // Likes + comments. Seeded from the feed row; updated optimistically and then
+  // reconciled against the server so any user can like/comment any reel.
+  const [liked, setLiked] = useState(Boolean(video.liked_by_me));
+  const [likeCount, setLikeCount] = useState(video.like_count ?? 0);
+  const [commentCount, setCommentCount] = useState(video.comment_count ?? 0);
+  const [commentsOpen, setCommentsOpen] = useState(false);
+  const likePending = useRef(false);
+
+  // Keep local state in sync if the feed row is refreshed underneath us.
+  useEffect(() => {
+    setLiked(Boolean(video.liked_by_me));
+    setLikeCount(video.like_count ?? 0);
+    setCommentCount(video.comment_count ?? 0);
+  }, [video.liked_by_me, video.like_count, video.comment_count]);
+
+  const toggleLike = useCallback(() => {
+    if (likePending.current) return;
+    likePending.current = true;
+    const next = !liked;
+    setLiked(next);
+    setLikeCount((c) => Math.max(0, c + (next ? 1 : -1)));
+    toggleVideoLike(video.id)
+      .then((serverLiked) => {
+        setLiked(serverLiked);
+        setLikeCount((c) => {
+          // Correct the optimistic guess if the server disagrees.
+          if (serverLiked === next) return c;
+          return Math.max(0, c + (serverLiked ? 1 : -1));
+        });
+      })
+      .catch(() => {
+        // Roll back on failure.
+        setLiked(liked);
+        setLikeCount((c) => Math.max(0, c + (next ? -1 : 1)));
+      })
+      .finally(() => {
+        likePending.current = false;
+      });
+  }, [liked, video.id]);
+
+  const bumpCommentCount = useCallback((delta: number) => {
+    setCommentCount((c) => Math.max(0, c + delta));
+  }, []);
+
   const countView = useCallback(() => {
     if (countedView.current) return;
     countedView.current = true;
@@ -106,8 +151,9 @@ function FeedItem({ video, isActive, itemHeight, desktop, soundOn, onToggleSound
   const handleStarted = useCallback(() => setStarted(true), []);
 
   // YouTube: our poster + tap-to-play. Instagram: the reel (IG's own iframe, with
-  // IG's own poster + button) is mounted whenever the item is active.
-  const showReel = isInstagram ? isActive : isActive && playing;
+  // IG's own poster + button) is mounted whenever the item is active. Either way,
+  // pause the reel while the comments sheet is covering it.
+  const showReel = (isInstagram ? isActive : isActive && playing) && !commentsOpen;
   // Whether OUR chrome (poster/dim/"For You") should mask the player. For
   // Instagram this is just "not active" (no app poster ever, per above). For
   // YouTube it stays masked through the mount+load window, only clearing once
@@ -197,9 +243,26 @@ function FeedItem({ video, isActive, itemHeight, desktop, soundOn, onToggleSound
           (`box-none` so only the buttons take taps — the rest passes through to
           the video's own pause layer). */}
       <View style={styles.rail} pointerEvents="box-none">
-        <Pressable style={styles.railBtn} accessibilityLabel="Report video">
-          <Feather name="flag" size={18} color="#fff" />
-        </Pressable>
+        <View style={styles.railAction}>
+          <Pressable
+            style={[styles.railBtn, liked && styles.railBtnLiked]}
+            onPress={toggleLike}
+            accessibilityLabel={liked ? 'Unlike video' : 'Like video'}
+          >
+            <Feather name="heart" size={18} color={liked ? colors.pink : '#fff'} fill={liked ? colors.pink : 'none'} />
+          </Pressable>
+          {likeCount > 0 ? <Text style={styles.railActionLabel}>{likeCount}</Text> : null}
+        </View>
+        <View style={styles.railAction}>
+          <Pressable
+            style={styles.railBtn}
+            onPress={() => setCommentsOpen(true)}
+            accessibilityLabel="View comments"
+          >
+            <Feather name="message-circle" size={18} color="#fff" />
+          </Pressable>
+          {commentCount > 0 ? <Text style={styles.railActionLabel}>{commentCount}</Text> : null}
+        </View>
         <Pressable style={styles.railBtn} accessibilityLabel="Share video">
           <Feather name="share-2" size={18} color="#fff" />
         </Pressable>
@@ -231,6 +294,13 @@ function FeedItem({ video, isActive, itemHeight, desktop, soundOn, onToggleSound
           {desktop ? 'Scroll or press ↑ ↓ for next' : '↑ Swipe up for next'}
         </Text>
       </View>
+
+      <CommentsSheet
+        videoId={video.id}
+        visible={commentsOpen}
+        onClose={() => setCommentsOpen(false)}
+        onCountDelta={bumpCommentCount}
+      />
     </View>
   );
 }
@@ -517,6 +587,8 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
   },
   rail: { position: 'absolute', right: 14, bottom: 100, alignItems: 'center', gap: 18 },
+  railAction: { alignItems: 'center', gap: 4 },
+  railActionLabel: { color: colors.text, fontFamily: fonts.monoSemibold, fontSize: 11 },
   railBtn: {
     width: 40,
     height: 40,
@@ -527,6 +599,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  railBtnLiked: { backgroundColor: 'rgba(253,54,103,0.16)', borderColor: colors.pink },
   railCount: { alignItems: 'center' },
   railCountNumber: { color: colors.text, fontFamily: fonts.monoSemibold, fontSize: 12 },
   railCountLabel: { color: colors.textMuted, fontFamily: fonts.mono, fontSize: 10 },

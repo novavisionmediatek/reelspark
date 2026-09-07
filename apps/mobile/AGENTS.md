@@ -50,7 +50,7 @@ desktop `≥1024`, wide `≥1440`.
   item scrolls out and back in. The paused poster is a raw
   `<img>` (RNW `<Image>` ignores `resizeMode` here) using YouTube's 9:16
   `oardefault.jpg` (`lib/ytThumb.ts`), heavily blurred + darkened as a backdrop.
-  The creator/caption row, the action rail (flag/share/views) and the bottom
+  The creator/caption row, the action rail (like/comment/share/views) and the bottom
   scrim **stay visible while the reel plays** (`box-none` so only the buttons
   take taps); the full dim, top scrim and "For You" tag show only while stopped.
 - **Instagram:** `VideoPlayer` loads `/reel/<id>/embed/` **directly** as an
@@ -92,6 +92,27 @@ desktop `≥1024`, wide `≥1440`.
   counts back to YouTube/Instagram's own view counts — neither platform
   exposes an API to increment another video's view count, and there isn't one
   to build against.
+- **Likes + comments:** DB in `supabase/migrations/0012_likes_comments.sql`.
+  `videos` gains denormalised `like_count` / `comment_count` columns kept in sync
+  by triggers, so `get_feed_page` (which is `select *` off `public.videos`)
+  returns them with no join or function change. `video_likes` (PK
+  `(video_id, user_id)`) and `video_comments` (soft-deleted via `is_deleted`) are
+  both readable by **any** authenticated user for an approved video, and any
+  authenticated user can like/unlike (`toggle_video_like(p_video_id)` RPC,
+  `security definer`, returns the resulting liked state) and post/delete their
+  own comments (plain RLS'd inserts/updates). `useFeed` does one extra
+  `video_likes` query per page to set `liked_by_me` on each row for the heart's
+  initial state. `FeedItem` holds `liked` / `likeCount` / `commentCount` in local
+  state (seeded from the feed row, updated optimistically then reconciled against
+  the RPC's return); the heart + comment buttons sit at the top of the action
+  rail with the exact count under each — **no count is shown while it's 0**.
+  Tapping the comment button opens `CommentsSheet`
+  (`src/components/CommentsSheet.tsx`) — a bottom sheet with an infinite list
+  (`useComments`, newest first, joins `profiles` for author name/avatar) and an
+  input row (`useAddComment` / `useDeleteComment`). The reel pauses while the
+  sheet is open (`showReel && !commentsOpen`). Comment adds/removes bump the
+  reel's local `commentCount` via `onCountDelta` rather than refetching the feed
+  (which would reset scroll position).
 - **My Videos:** `FlatList` `numColumns` = `useResponsive().gridColumns` (1 → 4).
 - **Form / content screens** (auth, Submit, Edit/Profile): the root `screen` style
   gets `maxWidth` + `alignSelf: 'center'` so content stays a readable column.

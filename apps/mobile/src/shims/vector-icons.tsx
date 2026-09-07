@@ -7,6 +7,9 @@ interface IconProps {
   name: string;
   size?: number;
   color?: string;
+  // Feather icons are stroke-only by default; pass a fill to render a solid
+  // glyph (e.g. a liked heart).
+  fill?: string;
   style?: CSSProperties;
 }
 
@@ -155,16 +158,36 @@ const FEATHER_PATHS: Record<string, ReactNode> = {
       <polyline points="21 15 16 10 5 21" />
     </>
   ),
+  heart: (
+    <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
+  ),
+  'message-circle': (
+    <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
+  ),
+  send: (
+    <>
+      <line x1="22" y1="2" x2="11" y2="13" />
+      <polygon points="22 2 15 22 11 13 2 9 22 2" />
+    </>
+  ),
+  'trash-2': (
+    <>
+      <polyline points="3 6 5 6 21 6" />
+      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+      <line x1="10" y1="11" x2="10" y2="17" />
+      <line x1="14" y1="11" x2="14" y2="17" />
+    </>
+  ),
 };
 
-function strokeIcon({ name, size = 24, color = 'currentColor', style }: IconProps) {
+function strokeIcon({ name, size = 24, color = 'currentColor', fill = 'none', style }: IconProps) {
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
       width={size}
       height={size}
       viewBox="0 0 24 24"
-      fill="none"
+      fill={fill}
       stroke={color}
       strokeWidth={2}
       strokeLinecap="round"
@@ -201,6 +224,10 @@ const featherGlyphs = {
   copy: 0,
   check: 0,
   image: 0,
+  heart: 0,
+  'message-circle': 0,
+  send: 0,
+  'trash-2': 0,
 } as const;
 
 export function Feather(props: IconProps) {
