@@ -35,9 +35,9 @@ non-refundable once access is enabled, no auto-renew) and referral withdrawals a
 paid within **2 working days** — note this differs from the current DB behaviour,
 where `profiles.payment_status='approved'` never expires (payment is still
 effectively one-time in code). Support contact: `support@reelspark.in`,
-`+91 89273 49105`. No placeholders remain in the pages; the fee/bonus figures
-(₹300 / ₹50 / ₹150) match `app_settings` defaults — keep `pricing.html` in sync
-if they change.
+`+91 89273 49105`. Only `[CIN …]` on `contact.html` is left as an optional
+fill-in; the fee/bonus figures (₹300 / ₹50 / ₹150) are taken from `app_settings`
+defaults — keep `pricing.html` in sync if they change.
 
 ## Responsive layout
 
