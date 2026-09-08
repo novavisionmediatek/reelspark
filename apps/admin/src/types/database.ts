@@ -92,6 +92,8 @@ export interface Video {
   moderated_by: string | null;
   moderated_at: string | null;
   view_count_in_app: number;
+  like_count: number;
+  comment_count: number;
   report_count: number;
   is_deleted: boolean;
   created_at: string;

@@ -34,10 +34,25 @@ export interface Video {
   status: VideoStatus;
   rejection_reason: string | null;
   view_count_in_app: number;
+  like_count: number;
+  comment_count: number;
   report_count: number;
   is_deleted: boolean;
   created_at: string;
   updated_at: string;
+  // Populated client-side by useFeed for the signed-in user — not a DB column.
+  liked_by_me?: boolean;
+}
+
+export interface VideoComment {
+  id: string;
+  video_id: string;
+  user_id: string;
+  body: string;
+  created_at: string;
+  // Flattened from the joined profiles row.
+  author_name: string | null;
+  author_avatar_url: string | null;
 }
 
 export interface RegistrationPayment {
