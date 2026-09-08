@@ -151,6 +151,7 @@ const FEATHER_PATHS: Record<string, ReactNode> = {
     </>
   ),
   check: <polyline points="20 6 9 17 4 12" />,
+  play: <polygon points="5 3 19 12 5 21 5 3" />,
   image: (
     <>
       <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
@@ -223,6 +224,7 @@ const featherGlyphs = {
   'volume-x': 0,
   copy: 0,
   check: 0,
+  play: 0,
   image: 0,
   heart: 0,
   'message-circle': 0,

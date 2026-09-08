@@ -15,6 +15,30 @@ This app was migrated off Expo. It now runs in the browser only:
 There are no native (iOS/Android) targets anymore. Platform-specific files can
 still use the `.web.tsx` suffix, but everything here is the web build.
 
+## Public legal / policy pages
+
+`assets/legal/*.html` are plain, dependency-free static pages (shared
+`styles.css`) that Vite copies from `publicDir` (`assets/`) to the site root, so
+they serve at `/legal/index.html`, `/legal/terms.html`, `/legal/privacy.html`,
+`/legal/refund.html`, `/legal/shipping.html`, `/legal/pricing.html`,
+`/legal/contact.html`. They exist for payment-gateway (Razorpay) merchant
+activation, which requires publicly reachable Terms, Privacy, Refund/Cancellation,
+Shipping/Delivery, Pricing and Contact pages, and are linked from
+`PaymentScreen` (`LEGAL_LINKS`).
+
+Entity: **Matrigyan Private Limited** (Pvt Ltd; GSTIN `19AAQCM7780C1ZY`, West
+Bengal; registered office JL No. 185, Balia, Salua, Kharagpur, Paschim Medinipur,
+WB 721145; directors Santosh Behara & Priya Devi) owns/operates ReelSpark at
+`https://reelspark.in`. The ₹300 annual fee is described as **GST-inclusive**.
+The pages describe the registration fee as an **annual** fee (12-month access,
+non-refundable once access is enabled, no auto-renew) and referral withdrawals as
+paid within **2 working days** — note this differs from the current DB behaviour,
+where `profiles.payment_status='approved'` never expires (payment is still
+effectively one-time in code). Support contact: `support@reelspark.in`,
+`+91 89273 49105`. No placeholders remain in the pages; the fee/bonus figures
+(₹300 / ₹50 / ₹150) match `app_settings` defaults — keep `pricing.html` in sync
+if they change.
+
 ## Responsive layout
 
 `src/theme/responsive.ts` exports `useResponsive()` (built on `useWindowDimensions`,
@@ -39,15 +63,18 @@ desktop `≥1024`, wide `≥1440`.
   crop, a landscape clip centre-crops to fill it. (Sizing the player as a 16:9
   box wider than the frame — the previous approach — made YouTube cover-fit a
   vertical Short to that over-wide box and zoom ~3x, cropping the Short away.)
-  **Autoplay:** `FeedItem` sets `playing = isActive` (`FeedScreen.tsx`), so a
-  YouTube reel starts as soon as it scrolls into view (`autoplay: 1` +
-  `playVideo()` in `onReady`, `youtubeEmbedHtml.ts`) and stops as soon as it
-  scrolls out — no tap needed. There is **no app play button**: a full-bleed
-  `Pressable` over the poster is only a fallback for when autoplay gets
-  blocked (e.g. the browser hasn't seen a user gesture yet); once running, tapping
-  the reel itself pauses/resumes it via the embed's `#tap` layer, which does
-  **not** re-trigger the `isActive` effect, so a manual pause sticks until the
-  item scrolls out and back in. The paused poster is a raw
+  **Tap-to-play (YouTube):** a YouTube reel does **not** autoplay on scroll-in.
+  `FeedItem` leaves `playing` false while the item is active and shows a
+  full-bleed `Pressable` over the poster with a centred play glyph; tapping it
+  flips `playing` true, which mounts the embed — the player then self-starts
+  muted (`autoplay: 1` + `playVideo()` in `onReady`, `youtubeEmbedHtml.ts`) off
+  that same gesture. Once running, tapping the reel pauses/resumes it via the
+  embed's `#tap` layer, which does **not** re-trigger the `isActive` effect, so
+  a manual pause sticks until the item scrolls out and back in. This is
+  deliberate: an in-app YouTube play is only ever a real, user-initiated watch —
+  the only kind YouTube itself might count toward the video's public view total
+  (see **View counting**). Scrolling the item away flips `playing`/`started`
+  false and unmounts the iframe. The paused poster is a raw
   `<img>` (RNW `<Image>` ignores `resizeMode` here) using YouTube's 9:16
   `oardefault.jpg` (`lib/ytThumb.ts`), heavily blurred + darkened as a backdrop.
   The creator/caption row, the action rail (like/comment/share/views) and the bottom
@@ -88,10 +115,40 @@ desktop `≥1024`, wide `≥1440`.
   once-per-user guarantee (across sessions, reloads, re-scrolling past an item)
   is the DB unique constraint. The client only bumps the on-screen count
   optimistically when the RPC reports a new view, so a re-watch doesn't show a
-  bogus increment. There is intentionally no mechanism to push in-app view
-  counts back to YouTube/Instagram's own view counts — neither platform
-  exposes an API to increment another video's view count, and there isn't one
-  to build against.
+  bogus increment.
+  **When the view is counted differs by platform.** Instagram: on scroll-in —
+  the tap that starts an IG reel is inside its cross-origin iframe and can't be
+  observed. YouTube: only after **≈30s of real playback** accumulates (or a
+  near-complete watch of a shorter clip). `youtubeEmbedHtml.ts` runs a 1s
+  accumulator while the player is `PLAYING` (pauses freeze it, they don't reset
+  it; scrolling the reel away unmounts the iframe and drops it) and posts
+  `watched` once at `WATCH_THRESHOLD_SECONDS`; `VideoPlayer` forwards that as
+  `onWatched`, and `FeedItem` calls the same `countView()` off it. Combined with
+  tap-to-play (above), that means an in-app YouTube view corresponds to a
+  genuine, user-initiated ~30s watch — the profile of a view YouTube's own
+  systems may also count toward the real video.
+  There is still **no mechanism (and no API) to push a view directly onto
+  YouTube/Instagram** — neither platform exposes a way to increment another
+  video's count, and no URL form or embed flag is a "count this view" switch.
+  Whether an embedded watch counts is entirely YouTube's call; this design only
+  stops the app from counting plays YouTube never would, and never presents
+  `view_count_in_app` as the real platform total (the rail label and the admin
+  video detail both say "in-app views" on purpose).
+  **The full set of levers we have to raise the counted fraction on YouTube,
+  and nothing more:** (1) play through YouTube's official IFrame Player — done;
+  (2) tap-to-play, so every play is user-initiated — done; (3) ≥30s watch before
+  it counts (`WATCH_THRESHOLD_SECONDS`) — done; (4) audible by default
+  (`soundOn` starts `true` in `FeedScreen.tsx` — a muted play is a weaker
+  signal); (5) no auto-advance / no auto-loop (`handleEnded` just stops);
+  (6) `widget_referrer` on the embed so the play shows up as `reelspark.app`
+  under Traffic source -> External in the creator's YouTube Analytics (this is
+  attribution only, still not a view guarantee). **Instagram has none of these
+  levers** — its `/embed/` iframe is cross-origin and unscriptable, so play,
+  watch-time and completion are all unobservable and there is nothing to tune;
+  the IG in-app view is counted on scroll-in and that is the end of what's
+  possible there. The only way to get *guaranteed* real platform views is to
+  send the viewer to youtube.com / instagram.com itself, which the product has
+  chosen not to do.
 - **Likes + comments:** DB in `supabase/migrations/0012_likes_comments.sql`.
   `videos` gains denormalised `like_count` / `comment_count` columns kept in sync
   by triggers, so `get_feed_page` (which is `select *` off `public.videos`)
