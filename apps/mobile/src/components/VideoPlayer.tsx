@@ -27,6 +27,11 @@ export interface VideoPlayerProps {
   // postMessage. Lets the caller keep its own poster up over the iframe's
   // brief load/buffer window instead of exposing YouTube's own loading state.
   onStarted?: () => void;
+  // YouTube only: fires once, after ~30s of real playback have accumulated (or a
+  // near-complete watch of a shorter clip) — see `youtubeEmbedHtml.ts`'s
+  // 'watched' postMessage. The feed counts the in-app view on this, not on
+  // scroll-in, so an in-app play is a genuine watch YouTube may also count.
+  onWatched?: () => void;
   style?: StyleProp<ViewStyle>;
 }
 
@@ -34,7 +39,7 @@ export interface VideoPlayerProps {
 // srcDoc (origin = this page's origin); Instagram loads its /embed/ page directly
 // (a nested srcDoc frame, or a CSS-transformed iframe on mobile, stopped IG
 // playing on tap) and hides IG's chrome with plain layout offsets.
-export function VideoPlayer({ platform, videoId, playing, muted = true, onEnded, onStarted, style }: VideoPlayerProps) {
+export function VideoPlayer({ platform, videoId, playing, muted = true, onEnded, onStarted, onWatched, style }: VideoPlayerProps) {
   const isYouTube = platform === 'youtube';
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
@@ -43,10 +48,11 @@ export function VideoPlayer({ platform, videoId, playing, muted = true, onEnded,
     function onMessage(e: MessageEvent) {
       if (e.data === 'ended') onEnded?.();
       else if (e.data === 'playing') onStarted?.();
+      else if (e.data === 'watched') onWatched?.();
     }
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, [playing, isYouTube, onEnded, onStarted]);
+  }, [playing, isYouTube, onEnded, onStarted, onWatched]);
 
   // Only the initial mute state is baked into the iframe's srcDoc (below) —
   // reacting to `muted` here and posting to the live player instead means

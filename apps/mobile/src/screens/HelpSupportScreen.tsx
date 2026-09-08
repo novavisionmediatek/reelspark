@@ -8,7 +8,7 @@ import type { ProfileStackParamList } from '../navigation/types';
 
 type Props = NativeStackScreenProps<ProfileStackParamList, 'HelpSupport'>;
 
-const SUPPORT_EMAIL = 'support@reelspark.app';
+const SUPPORT_EMAIL = 'support@reelspark.in';
 
 const FAQS: { q: string; a: string }[] = [
   {

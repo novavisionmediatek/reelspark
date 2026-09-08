@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Image, Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 import { Feather } from '@expo/vector-icons';
@@ -179,9 +179,37 @@ export function PaymentScreen({ navigation }: Props) {
           style={{ marginTop: spacing.lg }}
         />
         <Button label="Cancel" variant="ghost" onPress={() => navigation.goBack()} />
+
+        <View style={styles.legalRow}>
+          <Text style={styles.legalNote}>By paying you agree to our </Text>
+          {LEGAL_LINKS.map((link, i) => (
+            <Text key={link.path}>
+              <Text style={styles.legalLink} onPress={() => openLegal(link.path)}>
+                {link.label}
+              </Text>
+              {i < LEGAL_LINKS.length - 1 ? <Text style={styles.legalNote}> · </Text> : null}
+            </Text>
+          ))}
+        </View>
       </ScrollView>
     </SafeAreaView>
   );
+}
+
+// Public policy pages live as static HTML under /legal/*.html (see
+// apps/mobile/assets/legal/). Razorpay requires these to be reachable from the
+// payment context.
+const LEGAL_LINKS = [
+  { label: 'Terms', path: 'terms.html' },
+  { label: 'Refund Policy', path: 'refund.html' },
+  { label: 'Privacy', path: 'privacy.html' },
+] as const;
+
+function openLegal(path: string) {
+  const base = typeof window !== 'undefined' ? window.location.origin : '';
+  Linking.openURL(`${base}/legal/${path}`).catch(() => {
+    /* no handler available */
+  });
 }
 
 const styles = StyleSheet.create({
@@ -236,6 +264,16 @@ const styles = StyleSheet.create({
   screenshotPreview: { width: '100%', height: 220, resizeMode: 'contain', backgroundColor: colors.background },
 
   error: { ...type.bodySmall, color: colors.coral, marginTop: spacing.sm },
+
+  legalRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: spacing.lg,
+  },
+  legalNote: { ...type.bodySmall, color: colors.textMuted },
+  legalLink: { ...type.bodySmall, color: colors.textMuted, textDecorationLine: 'underline' },
 
   rejectedBox: {
     backgroundColor: 'rgba(254,73,64,0.1)',

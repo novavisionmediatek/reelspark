@@ -16,6 +16,13 @@
 //  - #tap transparent layer -> swallows taps so YT chrome never re-appears, and
 //    toggles play/pause instead
 //  - posts "ended" to its host when the clip finishes
+//  - posts "watched" ONCE after WATCH_THRESHOLD_SECONDS of real playback have
+//    accumulated (or a near-complete watch of a clip shorter than that). The
+//    feed uses this — not "iframe mounted" — as the moment an in-app view is
+//    counted, so an in-app YouTube play is a genuine, user-initiated watch that
+//    YouTube itself may also count toward the real video's view total. There is
+//    still no API to *force* a YouTube view; this only stops the app from
+//    counting plays YouTube never would.
 //
 // `origin` MUST equal the document's real origin (native: the WebView
 // `source.baseUrl`; web: window.location.origin) and must NOT be youtube.com,
@@ -41,6 +48,15 @@ const MASK_TOP_OPAQUE_PX = 58;
 const MASK_BOTTOM_HEIGHT_PX = 140;
 const MASK_BOTTOM_OPAQUE_PX = 78;
 
+// How many seconds of actual playback must accumulate before the embed posts
+// "watched" (the feed's cue to count the in-app view). This ~30s figure is
+// deliberately aligned with YouTube's own view-validation heuristics (a play
+// only registers on YouTube after a similar minimum watch), so an in-app view
+// tends to coincide with one YouTube would also count. Don't lower it casually.
+// Pauses don't reset it; scrolling the reel away (which unmounts this iframe)
+// does.
+const WATCH_THRESHOLD_SECONDS = 30;
+
 // Browsers only allow autoplay-with-sound after the page has already seen a
 // user gesture; muted autoplay is unconditionally allowed everywhere. So every
 // reel mounts muted by default (`initialMuted`) via an explicit `mute()` call
@@ -49,6 +65,11 @@ const MASK_BOTTOM_OPAQUE_PX = 78;
 // autoplay stays blocked. The app's speaker toggle then mutes/unmutes the
 // live player over postMessage instead of touching this initial value again
 // (which would mean regenerating the srcDoc and reloading the iframe).
+// The feed mounts this iframe only after the viewer taps the poster, so the
+// player still self-starts (muted) in onReady — that first frame of playback
+// is already the direct result of a user tap. What changed for the in-app
+// "view" is *when it's counted*: not here, but WATCH_THRESHOLD_SECONDS later,
+// via the "watched" post below.
 export function youtubeEmbedHtml(videoId: string, origin: string = YT_EMBED_ORIGIN, initialMuted = true) {
   const safeId = String(videoId).replace(/[^a-zA-Z0-9_-]/g, '');
   const safeOrigin = /^https?:\/\/[^"'\s]+$/.test(origin) ? origin : YT_EMBED_ORIGIN;
@@ -101,6 +122,31 @@ export function youtubeEmbedHtml(videoId: string, origin: string = YT_EMBED_ORIG
   var player;
   var isPlaying = false;
 
+  // Real-playback accumulator behind the host's "watched" event. A 1s tick runs
+  // only while PLAYING; pauses freeze it, they don't reset it. 'watched' is
+  // posted exactly once, when the total crosses WATCH_THRESHOLD_SECONDS.
+  var WATCH_THRESHOLD = ${WATCH_THRESHOLD_SECONDS};
+  var watchedSeconds = 0;
+  var watchTimer = null;
+  var watchedPosted = false;
+
+  function markWatched() {
+    if (watchedPosted) return;
+    watchedPosted = true;
+    stopWatchTimer();
+    post('watched');
+  }
+  function startWatchTimer() {
+    if (watchTimer || watchedPosted) return;
+    watchTimer = setInterval(function () {
+      watchedSeconds += 1;
+      if (watchedSeconds >= WATCH_THRESHOLD) markWatched();
+    }, 1000);
+  }
+  function stopWatchTimer() {
+    if (watchTimer) { clearInterval(watchTimer); watchTimer = null; }
+  }
+
   function post(msg) {
     if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
       window.ReactNativeWebView.postMessage(msg);
@@ -148,7 +194,13 @@ export function youtubeEmbedHtml(videoId: string, origin: string = YT_EMBED_ORIG
       videoId: '${safeId}',
       playerVars: {
         autoplay: 1, playsinline: 1, controls: 0, rel: 0, modestbranding: 1,
-        fs: 0, disablekb: 1, iv_load_policy: 3, cc_load_policy: 0, origin: '${safeOrigin}'
+        fs: 0, disablekb: 1, iv_load_policy: 3, cc_load_policy: 0,
+        origin: '${safeOrigin}',
+        // Attributes the embedded play to this app in the creator's YouTube
+        // Analytics (Traffic source -> External -> ${safeOrigin}). It does NOT
+        // make a view count — YouTube alone decides that — it only lets the
+        // creator see that ReelSpark drove real watches.
+        widget_referrer: '${safeOrigin}'
       },
       events: {
         onReady: function (e) {
@@ -168,10 +220,22 @@ export function youtubeEmbedHtml(videoId: string, origin: string = YT_EMBED_ORIG
           if (e.data === YT.PlayerState.PLAYING) {
             if (!isPlaying) post('playing');
             isPlaying = true;
+            startWatchTimer();
             killCaptions(player);
           }
-          else if (e.data === YT.PlayerState.PAUSED) { isPlaying = false; }
-          else if (e.data === YT.PlayerState.ENDED) { isPlaying = false; post('ended'); }
+          else if (e.data === YT.PlayerState.PAUSED) { isPlaying = false; stopWatchTimer(); }
+          else if (e.data === YT.PlayerState.ENDED) {
+            isPlaying = false;
+            stopWatchTimer();
+            // A full watch of a clip shorter than the threshold is still a real
+            // view — count it if the accumulated time covers ~all of the clip.
+            if (!watchedPosted) {
+              var dur = 0;
+              try { dur = player.getDuration() || 0; } catch (err) {}
+              if (dur > 0 && dur < WATCH_THRESHOLD && watchedSeconds >= dur * 0.9) markWatched();
+            }
+            post('ended');
+          }
         },
         onError: function (e) { post('error:' + e.data); }
       }

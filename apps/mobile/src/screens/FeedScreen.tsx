@@ -57,6 +57,12 @@ function FeedItem({ video, isActive, itemHeight, desktop, soundOn, onToggleSound
   // script it or hide its centre play button. So we just mount the reel as soon
   // as it's the active item and let the viewer tap IG's own button once to
   // start it — no app poster, no app play button, no chrome layered on top.
+  // YouTube is the opposite: it never autoplays here — the viewer taps our
+  // poster's play button, `playing` flips true, and only then does the embed
+  // mount and start. The in-app view is counted after ≈30s of that playback
+  // (`onWatched`), not on scroll-in, so it lines up with what YouTube itself
+  // would count. (There is still no API to push a view onto YouTube — this only
+  // keeps the app from counting plays YouTube wouldn't.)
   const isInstagram = video.platform === 'instagram';
   const [playing, setPlaying] = useState(false);
   // YouTube only: flips true once the embed actually confirms a PLAYING state
@@ -123,29 +129,39 @@ function FeedItem({ video, isActive, itemHeight, desktop, soundOn, onToggleSound
     });
   }, [video.id]);
 
-  // Autoplay: start as soon as the item scrolls into view, stop as soon as it
-  // scrolls out. A manual pause (tap while active) isn't overridden by this,
-  // since it only re-runs when `isActive` itself flips.
+  // Instagram autoplays on scroll-in (its cross-origin iframe can't be scripted,
+  // and its own centre button is the only play control). YouTube does NOT:
+  // `playing` stays false until the viewer taps our poster, so an in-app
+  // YouTube play is always an explicit, user-initiated watch — the only kind
+  // YouTube itself may count toward the real video. Either way, stop when the
+  // item scrolls out. A manual pause while active isn't overridden here, since
+  // this only re-runs when `isActive` flips.
   useEffect(() => {
-    setPlaying(isActive);
+    if (isInstagram) setPlaying(isActive);
+    else if (!isActive) setPlaying(false);
     if (!isActive) setStarted(false);
-  }, [isActive]);
+  }, [isActive, isInstagram]);
 
-  // Count the view as soon as the item scrolls in and starts autoplaying — for
-  // IG we also can't observe the tap inside its cross-origin iframe.
+  // Instagram: count the view on scroll-in — the tap that starts an IG reel
+  // happens inside its cross-origin iframe and can't be observed. YouTube: the
+  // view is counted from `onWatched` (≈30s of real playback) instead, so it
+  // reflects a genuine watch rather than a scroll-by.
   useEffect(() => {
-    if (isActive) countView();
-  }, [isActive, countView]);
+    if (isActive && isInstagram) countView();
+  }, [isActive, isInstagram, countView]);
 
   const togglePlay = useCallback(() => {
-    setPlaying((p) => {
-      if (!p) countView();
-      return !p;
-    });
-  }, [countView]);
+    setPlaying((p) => !p);
+  }, []);
 
   const handleEnded = useCallback(() => {
     setPlaying(false);
+    // Bring our poster + play button back so a finished YouTube reel can be
+    // replayed with one tap instead of leaving a blank frame. Note: we
+    // deliberately do NOT auto-advance to the next reel on end, and the embed
+    // does not auto-loop — chaining/looping playback is the kind of pattern
+    // YouTube's view validation discounts. A finished play just stops.
+    setStarted(false);
   }, []);
 
   const handleStarted = useCallback(() => setStarted(true), []);
@@ -180,6 +196,7 @@ function FeedItem({ video, isActive, itemHeight, desktop, soundOn, onToggleSound
         muted={!soundOn}
         onEnded={handleEnded}
         onStarted={isInstagram ? undefined : handleStarted}
+        onWatched={isInstagram ? undefined : countView}
         style={styles.playerFill}
       />
 
@@ -230,13 +247,21 @@ function FeedItem({ video, isActive, itemHeight, desktop, soundOn, onToggleSound
         pointerEvents="none"
       />
 
-      {/* No app play button. YouTube autoplays on scroll-in; this fallback only
-          shows if that autoplay got blocked (e.g. no user gesture yet), and the
-          player's own tap layer handles pause/resume once it's running.
+      {/* YouTube tap-to-play: the reel does not autoplay on scroll-in, so this
+          full-bleed target (with a centred play glyph) is how the viewer starts
+          it. Tapping mounts the embed, which then self-starts muted off this
+          same gesture; the player's own tap layer takes over pause/resume once
+          it's running (`started`), at which point this chrome clears.
           Instagram: the reel is already mounted, so the single tap lands on
-          IG's own control. */}
+          IG's own control — no app play button. */}
       {showChrome && !isInstagram ? (
-        <Pressable style={StyleSheet.absoluteFill} onPress={togglePlay} accessibilityLabel="Play video" />
+        <Pressable style={StyleSheet.absoluteFill} onPress={togglePlay} accessibilityLabel="Play video">
+          <View style={styles.playButtonWrap} pointerEvents="none">
+            <View style={styles.playButton}>
+              <Feather name="play" size={30} color="#fff" fill="#fff" style={{ marginLeft: 4 }} />
+            </View>
+          </View>
+        </Pressable>
       ) : null}
 
       {/* Action rail + creator/caption row stay visible while the reel plays
@@ -266,7 +291,7 @@ function FeedItem({ video, isActive, itemHeight, desktop, soundOn, onToggleSound
         <Pressable style={styles.railBtn} accessibilityLabel="Share video">
           <Feather name="share-2" size={18} color="#fff" />
         </Pressable>
-        {/* YouTube only — every reel autoplays muted (browsers block
+        {/* YouTube only — a reel starts muted on tap (browsers block
             autoplay-with-sound with no prior gesture); this turns sound on for
             the current and all future reels. Instagram's own iframe audio
             isn't reachable from here, so the toggle is hidden for it. */}
@@ -275,9 +300,12 @@ function FeedItem({ video, isActive, itemHeight, desktop, soundOn, onToggleSound
             <Feather name={soundOn ? 'volume-2' : 'volume-x'} size={18} color="#fff" />
           </Pressable>
         ) : null}
+        {/* Deliberately "in-app views", never just "views": this is
+            view_count_in_app (watches inside ReelSpark), which is not — and will
+            differ from — the video's real YouTube/Instagram view count. */}
         <View style={styles.railCount}>
           <Text style={styles.railCountNumber}>{views}</Text>
-          <Text style={styles.railCountLabel}>views</Text>
+          <Text style={styles.railCountLabel}>in-app{'\n'}views</Text>
         </View>
       </View>
 
@@ -312,13 +340,17 @@ export function FeedScreen() {
   const { feedDesktop } = useResponsive();
   const isFocused = useIsFocused();
 
-  // Shared across every reel: unmuting once keeps sound on as you keep
-  // scrolling, and the choice survives a reload.
+  // Shared across every reel; the choice survives a reload. Defaults to sound
+  // ON: a muted play is a weaker "real view" signal to YouTube, and playback
+  // here always follows an explicit tap-to-play so autoplay-with-sound is
+  // already permitted by the browser. A viewer who mutes is remembered
+  // (stored '0') and every later reel stays muted for them.
   const [soundOn, setSoundOn] = useState(() => {
     try {
-      return localStorage.getItem(SOUND_PREF_KEY) === '1';
+      const stored = localStorage.getItem(SOUND_PREF_KEY);
+      return stored === null ? true : stored === '1';
     } catch {
-      return false;
+      return true;
     }
   });
   const toggleSound = useCallback(() => {
@@ -574,6 +606,17 @@ const styles = StyleSheet.create({
   item: { width: '100%', overflow: 'hidden' },
   posterScrim: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(9,9,11,0.18)' },
   playerFill: { ...StyleSheet.absoluteFillObject, backgroundColor: '#000' },
+  playButtonWrap: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
+  playButton: {
+    width: 76,
+    height: 76,
+    borderRadius: 38,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.25)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   topGradient: { position: 'absolute', top: 0, left: 0, right: 0, height: 130 },
   bottomGradient: { position: 'absolute', bottom: 0, left: 0, right: 0, height: 280 },
   forYou: {
@@ -602,7 +645,7 @@ const styles = StyleSheet.create({
   railBtnLiked: { backgroundColor: 'rgba(253,54,103,0.16)', borderColor: colors.pink },
   railCount: { alignItems: 'center' },
   railCountNumber: { color: colors.text, fontFamily: fonts.monoSemibold, fontSize: 12 },
-  railCountLabel: { color: colors.textMuted, fontFamily: fonts.mono, fontSize: 10 },
+  railCountLabel: { color: colors.textMuted, fontFamily: fonts.mono, fontSize: 10, textAlign: 'center', lineHeight: 12 },
   overlay: { position: 'absolute', left: 18, right: 74, bottom: 40, gap: 8 },
   creatorRow: { flexDirection: 'row', alignItems: 'center', gap: 9 },
   creatorName: { color: colors.text, fontFamily: fonts.bodySemibold, fontSize: 14 },
