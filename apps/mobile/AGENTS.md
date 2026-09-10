@@ -24,7 +24,8 @@ they serve at `/legal/index.html`, `/legal/terms.html`, `/legal/privacy.html`,
 `/legal/contact.html`. They exist for payment-gateway (Razorpay) merchant
 activation, which requires publicly reachable Terms, Privacy, Refund/Cancellation,
 Shipping/Delivery, Pricing and Contact pages, and are linked from
-`PaymentScreen` (`LEGAL_LINKS`).
+`PaymentScreen` (`LEGAL_LINKS`) **and** the pre-login `WelcomeScreen` footer (so a
+payment-gateway reviewer can reach them without an account).
 
 Entity: **Matrigyan Private Limited** (Pvt Ltd; GSTIN `19AAQCM7780C1ZY`, West
 Bengal; registered office JL No. 185, Balia, Salua, Kharagpur, Paschim Medinipur,
@@ -32,9 +33,11 @@ WB 721145; directors Santosh Behara & Priya Devi) owns/operates ReelSpark at
 `https://reelspark.in`. The ₹300 annual fee is described as **GST-inclusive**.
 The pages describe the registration fee as an **annual** fee (12-month access,
 non-refundable once access is enabled, no auto-renew) and referral withdrawals as
-paid within **2 working days** — note this differs from the current DB behaviour,
-where `profiles.payment_status='approved'` never expires (payment is still
-effectively one-time in code). Support contact: `support@reelspark.in`,
+paid within **2 working days**. As of `0013` the DB matches this: approval sets
+`profiles.paid_until = now() + 1 year` and posting is gated on an *active*
+membership (`payment_status='approved'` AND `paid_until` in the future), so access
+lapses after 12 months and a fresh payment renews it. Support contact:
+`support@reelspark.in`,
 `+91 89273 49105`. Only `[CIN …]` on `contact.html` is left as an optional
 fill-in; the fee/bonus figures (₹300 / ₹50 / ₹150) are taken from `app_settings`
 defaults — keep `pricing.html` in sync if they change.
@@ -176,31 +179,44 @@ desktop `≥1024`, wide `≥1440`.
 
 ## Paid registration + referrals
 
-DB: `supabase/migrations/0006_registration_payments_referrals.sql` +
-`0010_manual_upi_payments.sql` (0007/0008/0009 also apply in between — run in
-order). `profiles.payment_status` (`unpaid|submitted|approved|rejected`) gates
-`videos` inserts via the `check_can_post` trigger; `MainStackNavigator` wraps
-the tabs so `PaymentScreen` can be pushed over browse-only tabs. `SubmitScreen`
-shows `<PaymentGate>` until `payment_status === 'approved'`.
+DB: `supabase/migrations/0006_registration_payments_referrals.sql` then
+`0013_razorpay_payments.sql` (0007–0012 also apply in between — run in order;
+0007 was an earlier Razorpay attempt, 0010 reverted it to manual UPI, **0013
+re-does Razorpay + makes the fee a real annual membership**). Membership is
+"active" ≡ `profiles.payment_status='approved'` AND `profiles.paid_until` in the
+future (`has_active_membership(uuid)` SQL fn); `check_can_post` gates `videos`
+inserts on it, `SubmitScreen` shows `<PaymentGate>` when it's false (with an
+"expired / renew" variant), `MainStackNavigator` wraps the tabs so `PaymentScreen`
+can be pushed over browse-only tabs.
 
-Payment is **manual UPI**, not a payment gateway: `PaymentScreen` renders a
-`upi://pay?pa=<upi_id>&pn=<payee>&am=<fee>&cu=INR` QR (`PaymentQrCode.tsx`,
-generated client-side with the `qrcode` package — a data URI, not a stored
-image, so it always reflects the live `app_settings.upi_id`/`upi_payee_name`)
-plus the UPI ID as copyable text. The user pays with any UPI app, then enters
-their UTR/transaction reference and attaches a screenshot (`expo-image-picker`
-shim); submitting uploads the screenshot to the private `payment-proofs`
-storage bucket (`<user_id>/<timestamp>.jpg`) and calls
-`submit_registration_payment(p_upi_reference, p_screenshot_path)`, which
-requires both and flips the row + profile to `submitted`. An admin reviews it
-on the admin **Payments** page (screenshot shown via a signed URL) and calls
-`approve_registration_payment` / `reject_registration_payment`; approval
-credits the referrer `app_settings.referral_bonus_inr` once per payment.
-`useRegistrationPayment` polls while `submitted`. There is no automatic
-approval path — a payment is only ever approved by an admin looking at the
-UTR and screenshot. (An earlier iteration used Razorpay Checkout for
-automatic verification; 0010 reverted it because the product now wants manual
-UTR + screenshot review instead.) Referral code entered at sign-up
+Payment is **Razorpay Checkout** (web-only overlay; this is a react-native-web
+build). Flow: `usePayWithRazorpay` (`hooks/useRegistrationPayment.ts`) →
+`loadCheckoutScript()` (`lib/razorpay.ts`, injects `checkout.razorpay.com/v1/checkout.js`)
+→ `supabase.functions.invoke('razorpay-create-order')` (reads the fee from
+`app_settings` server-side, never the client) → `openCheckout()` → on the
+`handler` callback POST to `razorpay-verify-payment` (fast unlock), and the
+`razorpay-webhook` Edge Function (`payment.captured`, HMAC-verified) is the
+authoritative backstop. Both call the idempotent `confirm_razorpay_payment` RPC,
+which sets `payment_status='approved'`, extends `paid_until` by 1 year from the
+later of its current value or now, and credits the referrer
+`app_settings.referral_bonus_inr` **once, on the referred user's first approved
+payment only** (renewals don't re-pay). `PaymentScreen` states: active /
+expiring-soon (renew) / expired / "confirming…" (webhook pending) / pay.
+`useRegistrationPayment` polls while the row is `created` or `submitted`.
+
+Edge Functions live in `supabase/functions/` (`razorpay-create-order`,
+`razorpay-verify-payment` — both `verify_jwt=true`; `razorpay-webhook` —
+`verify_jwt=false`, auth is the `X-Razorpay-Signature` HMAC). Secrets:
+`RAZORPAY_KEY_ID` / `RAZORPAY_KEY_SECRET` / `RAZORPAY_WEBHOOK_SECRET` via
+`supabase secrets set`. The publishable `app_settings.razorpay_key_id` is edited
+on the admin **Settings** page. Admin **Payments** keeps `approve_registration_payment`
+/ `reject_registration_payment` for manual overrides (missed webhook) and refund
+bookkeeping (Reject an `approved` row → clears `paid_until` unless a newer
+approved payment exists). `0013` also closes a hole: the profile self-update RLS
+was column-blind, so `guard_profile_privileged_columns` now also blocks a
+non-admin from editing `payment_status` / `paid_until`.
+
+Referral code entered at sign-up
 (`options.data.referral_code`); balance shown on `ProfileScreen`. The Profile card
 shares an invite link `<origin>/?ref=CODE`; `src/lib/referral.ts` lifts `?ref=` on
 app start (`App.tsx`) into `sessionStorage`, `AuthNavigator` then opens on `SignUp`

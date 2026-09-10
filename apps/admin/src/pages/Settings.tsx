@@ -20,8 +20,7 @@ function RegistrationSettings() {
   const [fee, setFee] = useState('300');
   const [bonus, setBonus] = useState('50');
   const [minWithdrawal, setMinWithdrawal] = useState('150');
-  const [upiId, setUpiId] = useState('');
-  const [upiPayeeName, setUpiPayeeName] = useState('');
+  const [razorpayKeyId, setRazorpayKeyId] = useState('');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
@@ -30,8 +29,7 @@ function RegistrationSettings() {
     setFee(String(data.registration_fee_inr));
     setBonus(String(data.referral_bonus_inr));
     setMinWithdrawal(String(data.min_referral_withdrawal_inr ?? 150));
-    setUpiId(data.upi_id ?? '');
-    setUpiPayeeName(data.upi_payee_name ?? '');
+    setRazorpayKeyId(data.razorpay_key_id ?? '');
   }, [data]);
 
   async function handleSave(e: FormEvent) {
@@ -44,8 +42,7 @@ function RegistrationSettings() {
         registration_fee_inr: Math.max(0, parseInt(fee, 10) || 0),
         referral_bonus_inr: Math.max(0, parseInt(bonus, 10) || 0),
         min_referral_withdrawal_inr: Math.max(0, parseInt(minWithdrawal, 10) || 0),
-        upi_id: upiId.trim(),
-        upi_payee_name: upiPayeeName.trim(),
+        razorpay_key_id: razorpayKeyId.trim(),
       })
       .eq('id', true);
     setBusy(false);
@@ -63,9 +60,9 @@ function RegistrationSettings() {
     <section className={SECTION}>
       <h2 className="font-medium text-sm mb-1">Registration &amp; referral</h2>
       <p className="text-text-muted text-xs mb-4">
-        The one-time fee new users pay, the bonus a referrer earns when their invitee is approved, and the UPI ID the
-        app's payment QR code and text both point to. Users pay this directly and submit a UTR + screenshot for you
-        to verify on the Payments page.
+        The yearly membership fee new users pay, the bonus a referrer earns when their invitee first pays, and the
+        publishable Razorpay Key ID the checkout uses. Payments are captured and verified automatically — the Payments
+        page is only for manual overrides (a missed webhook) and refund bookkeeping.
       </p>
       <form onSubmit={handleSave} className="space-y-3">
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -88,25 +85,18 @@ function RegistrationSettings() {
             />
           </div>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div>
-            <label className="block text-xs text-text-muted mb-1">UPI ID</label>
-            <input
-              value={upiId}
-              onChange={(e) => setUpiId(e.target.value)}
-              placeholder="yourname@okhdfcbank"
-              className={field}
-            />
-          </div>
-          <div>
-            <label className="block text-xs text-text-muted mb-1">UPI payee name</label>
-            <input
-              value={upiPayeeName}
-              onChange={(e) => setUpiPayeeName(e.target.value)}
-              placeholder="ReelSpark"
-              className={field}
-            />
-          </div>
+        <div>
+          <label className="block text-xs text-text-muted mb-1">Razorpay Key ID</label>
+          <input
+            value={razorpayKeyId}
+            onChange={(e) => setRazorpayKeyId(e.target.value)}
+            placeholder="rzp_live_XXXXXXXXXXXX"
+            className={field}
+          />
+          <p className="text-text-muted text-[11px] mt-1">
+            From Razorpay Dashboard → Settings → API Keys. The key <em>secret</em> is a Supabase Edge Function secret
+            (<code>RAZORPAY_KEY_SECRET</code>) and is never entered here.
+          </p>
         </div>
         {msg && <p className={`text-sm ${msg.ok ? 'text-purple-300' : 'text-coral'}`}>{msg.text}</p>}
         <button

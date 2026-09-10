@@ -6,14 +6,15 @@ import { Badge, Btn, DetailEmpty, Field, ListRow, ListState, WorkPage } from '..
 import type { RegistrationPayment, RegistrationPaymentStatus } from '../types/database';
 
 const FILTERS: { label: string; value: RegistrationPaymentStatus | 'all' }[] = [
+  { label: 'All', value: 'all' },
+  { label: 'Created', value: 'created' },
   { label: 'Submitted', value: 'submitted' },
   { label: 'Approved', value: 'approved' },
   { label: 'Rejected', value: 'rejected' },
-  { label: 'All', value: 'all' },
 ];
 
 export function Payments() {
-  const [filter, setFilter] = useState<RegistrationPaymentStatus | 'all'>('submitted');
+  const [filter, setFilter] = useState<RegistrationPaymentStatus | 'all'>('all');
   const [searchParams, setSearchParams] = useSearchParams();
   const [selectedId, setSelectedId] = useState<string | null>(searchParams.get('id'));
   const queryClient = useQueryClient();
@@ -23,7 +24,7 @@ export function Payments() {
     queryFn: async () => {
       let query = supabase
         .from('registration_payments')
-        .select('*, user:profiles!registration_payments_user_id_fkey (id, display_name, email, referred_by)')
+        .select('*, user:profiles!registration_payments_user_id_fkey (id, display_name, email, referred_by, paid_until)')
         .order('created_at', { ascending: false });
       if (filter !== 'all') query = query.eq('status', filter);
       const { data, error } = await query;
@@ -33,18 +34,6 @@ export function Payments() {
   });
 
   const selected = payments?.find((p) => p.id === selectedId) ?? null;
-
-  const { data: screenshotUrl } = useQuery({
-    queryKey: ['paymentScreenshot', selected?.screenshot_path],
-    enabled: !!selected?.screenshot_path,
-    queryFn: async () => {
-      const { data, error } = await supabase.storage
-        .from('payment-proofs')
-        .createSignedUrl(selected!.screenshot_path!, 3600);
-      if (error) throw error;
-      return data.signedUrl;
-    },
-  });
 
   const review = useMutation({
     mutationFn: async ({ id, approve, note }: { id: string; approve: boolean; note?: string }) => {
@@ -116,50 +105,67 @@ export function Payments() {
         <Field label="Amount" mono>
           ₹{selected.amount_inr}
         </Field>
-        <Field label="UTR / reference" mono>
-          {selected.upi_reference ?? '—'}
+        <Field label="Razorpay order" mono>
+          {selected.razorpay_order_id ?? '—'}
         </Field>
-        <Field label="Submitted" mono>
+        <Field label="Razorpay payment" mono>
+          {selected.razorpay_payment_id ? (
+            <a
+              href={`https://dashboard.razorpay.com/app/payments/${selected.razorpay_payment_id}`}
+              target="_blank"
+              rel="noreferrer"
+              className="underline"
+            >
+              {selected.razorpay_payment_id}
+            </a>
+          ) : (
+            '—'
+          )}
+        </Field>
+        {selected.upi_reference && (
+          <Field label="Legacy UTR" mono>
+            {selected.upi_reference}
+          </Field>
+        )}
+        <Field label="Started" mono>
           {new Date(selected.created_at).toLocaleString()}
         </Field>
         {selected.reviewed_at && (
-          <Field label="Reviewed" mono>
+          <Field label="Confirmed" mono>
             {new Date(selected.reviewed_at).toLocaleString()}
           </Field>
         )}
+        <Field label="Membership until" mono>
+          {selected.user?.paid_until ? new Date(selected.user.paid_until).toLocaleString() : '—'}
+        </Field>
         <Field label="Referred">
-          {selected.user?.referred_by ? 'Yes — referrer earns the bonus on approval.' : 'No.'}
+          {selected.user?.referred_by ? 'Yes — referrer earns the bonus on the first approved payment.' : 'No.'}
         </Field>
         {selected.admin_note && <Field label="Note">{selected.admin_note}</Field>}
-        {selected.screenshot_path && (
-          <Field label="Screenshot">
-            {screenshotUrl ? (
-              <a href={screenshotUrl} target="_blank" rel="noreferrer">
-                <img src={screenshotUrl} alt="Payment screenshot" className="max-w-full rounded-md border border-border mt-1" />
-              </a>
-            ) : (
-              <span className="text-text-muted">Loading…</span>
-            )}
-          </Field>
-        )}
       </div>
 
       {review.isError && <p className="text-coral text-sm mt-4">{(review.error as Error)?.message}</p>}
 
-      {selected.status === 'submitted' && (
+      {selected.status !== 'rejected' && (
         <div className="flex flex-wrap gap-2 mt-5">
-          <Btn variant="approve" onClick={() => review.mutate({ id: selected.id, approve: true })} disabled={review.isPending}>
-            Approve
-          </Btn>
+          {(selected.status === 'created' || selected.status === 'submitted') && (
+            <Btn variant="approve" onClick={() => review.mutate({ id: selected.id, approve: true })} disabled={review.isPending}>
+              Approve manually
+            </Btn>
+          )}
           <Btn
             variant="reject"
             disabled={review.isPending}
             onClick={() => {
-              const note = window.prompt('Rejection reason (shown to the creator):');
+              const note = window.prompt(
+                selected.status === 'approved'
+                  ? 'Reason for reversing this membership (shown to the creator):'
+                  : 'Rejection reason (shown to the creator):',
+              );
               if (note !== null) review.mutate({ id: selected.id, approve: false, note });
             }}
           >
-            Reject
+            {selected.status === 'approved' ? 'Reverse (refund)' : 'Reject'}
           </Btn>
         </div>
       )}
@@ -169,7 +175,7 @@ export function Payments() {
   return (
     <WorkPage
       title="Payments"
-      description="Registration payments paid via UPI — verify the UTR against your bank/UPI app and the screenshot before approving."
+      description="Annual membership payments via Razorpay. Normally auto-verified — use Approve/Reject here only for manual overrides (a missed webhook) and refund bookkeeping after you refund in the Razorpay dashboard."
       list={list}
       detail={detail}
       selected={!!selected}
