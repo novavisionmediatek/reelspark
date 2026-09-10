@@ -27,7 +27,7 @@
 // `origin` MUST equal the document's real origin (native: the WebView
 // `source.baseUrl`; web: window.location.origin) and must NOT be youtube.com,
 // or the IFrame API fails with "Error 152".
-export const YT_EMBED_ORIGIN = 'https://reelspark.app';
+export const YT_EMBED_ORIGIN = 'https://reelspark.in';
 
 // Extra enlargement on top of YouTube's cover fit. 1 = no extra zoom, so a true
 // 9:16 Short is shown in full. Raise above 1 to push YouTube's corner overlays
@@ -78,6 +78,12 @@ export function youtubeEmbedHtml(videoId: string, origin: string = YT_EMBED_ORIG
 <html>
 <head>
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<!-- Open the connections this frame is about to need before the inline script
+     even runs, so tap-to-play reaches a real video frame sooner. -->
+<link rel="preconnect" href="https://www.youtube.com" />
+<link rel="preconnect" href="https://i.ytimg.com" />
+<link rel="preconnect" href="https://s.ytimg.com" />
+<link rel="preconnect" href="https://googleads.g.doubleclick.net" />
 <style>
   html, body { margin: 0; padding: 0; height: 100%; background: #000; overflow: hidden; }
   /* clip everything YouTube draws outside the framed video */
