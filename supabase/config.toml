@@ -1,2 +1,15 @@
 # Minimal Supabase CLI config. `project_id` is the project ref the CLI links to.
 project_id = "gjaetfqanqnpwajxryrt"
+
+# Edge Functions. The two payment RPCs the app triggers require a logged-in user
+# (verify_jwt). The Razorpay webhook is called by Razorpay's servers, which
+# cannot present a Supabase JWT — it authenticates itself with an HMAC signature
+# over the raw body instead, so JWT verification must be off for it.
+[functions.razorpay-create-order]
+verify_jwt = true
+
+[functions.razorpay-verify-payment]
+verify_jwt = true
+
+[functions.razorpay-webhook]
+verify_jwt = false

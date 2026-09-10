@@ -14,6 +14,9 @@ export interface Profile {
   role: 'user' | 'moderator' | 'admin';
   is_banned: boolean;
   payment_status: PaymentStatus;
+  // End of the paid membership year (ISO). null = never paid. Membership is
+  // "active" only when payment_status === 'approved' AND paid_until is in the future.
+  paid_until: string | null;
   referral_code: string;
   referred_by: string | null;
   referral_balance_inr: number;
@@ -59,9 +62,14 @@ export interface RegistrationPayment {
   id: string;
   user_id: string;
   amount_inr: number;
+  // Legacy manual-UPI columns — null on Razorpay rows.
   upi_reference: string | null;
   screenshot_path: string | null;
-  status: 'submitted' | 'approved' | 'rejected';
+  // 'created' = Razorpay order placed, not yet verified.
+  status: 'created' | 'submitted' | 'approved' | 'rejected';
+  razorpay_order_id: string | null;
+  razorpay_payment_id: string | null;
+  razorpay_signature: string | null;
   reviewed_by: string | null;
   reviewed_at: string | null;
   admin_note: string | null;
@@ -99,7 +107,10 @@ export interface AppSettings {
   registration_fee_inr: number;
   referral_bonus_inr: number;
   min_referral_withdrawal_inr: number;
-  upi_id: string;
-  upi_payee_name: string;
+  // Publishable Razorpay key id (rzp_test_* / rzp_live_*). '' until an admin sets it.
+  razorpay_key_id: string;
+  // Legacy manual-UPI fields — still the referral-withdrawal payout destination.
+  upi_id?: string;
+  upi_payee_name?: string;
   updated_at: string;
 }

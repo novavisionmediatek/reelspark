@@ -24,7 +24,8 @@ const SETTINGS_ITEMS: { label: string; screen: keyof ProfileStackParamList }[] =
 ];
 
 const PAYMENT_PILL: Record<string, { label: string; color: string }> = {
-  approved: { label: 'Registered', color: colors.purple },
+  approved: { label: 'Member', color: colors.purple },
+  expired: { label: 'Renewal due', color: colors.coral },
   submitted: { label: 'Payment in review', color: colors.magenta },
   rejected: { label: 'Payment rejected', color: colors.coral },
   unpaid: { label: 'Not registered', color: colors.textMuted },
@@ -39,7 +40,9 @@ function ReferralCard() {
 
   const code = profile?.referral_code ?? '';
   const status = profile?.payment_status ?? 'unpaid';
-  const pill = PAYMENT_PILL[status] ?? PAYMENT_PILL.unpaid;
+  const paidUntilMs = profile?.paid_until ? new Date(profile.paid_until).getTime() : null;
+  const expired = status === 'approved' && paidUntilMs !== null && paidUntilMs <= Date.now();
+  const pill = expired ? PAYMENT_PILL.expired : PAYMENT_PILL[status] ?? PAYMENT_PILL.unpaid;
 
   const { data: friendCount } = useQuery({
     queryKey: ['referralCount', profile?.id],
