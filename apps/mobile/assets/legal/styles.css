@@ -1,0 +1,166 @@
+/* ReelSpark — shared styles for the public legal / policy pages.
+   These pages are plain static HTML served at /legal/*.html so that Razorpay
+   (and users) can reach them without signing in. Keep them dependency-free. */
+
+:root {
+  --bg: #f6f6f9;
+  --card: #ffffff;
+  --ink: #17171c;
+  --ink-soft: #4a4a55;
+  --ink-faint: #6f6f7c;
+  --line: #e5e5ec;
+  --brand-orange: #ff651c;
+  --brand-pink: #fd3667;
+  --brand-purple: #7d27e3;
+  --accent: #7d27e3;
+  --radius: 16px;
+  --maxw: 820px;
+}
+
+* { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 16px;
+  line-height: 1.7;
+}
+
+.wrap { max-width: var(--maxw); margin: 0 auto; padding: 0 20px; }
+
+/* ---- top bar ---- */
+.topbar {
+  height: 6px;
+  background: linear-gradient(90deg, var(--brand-orange), var(--brand-pink) 48%, var(--brand-purple));
+}
+
+header.site {
+  padding: 28px 0 18px;
+}
+header.site .wrap {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 800;
+  font-size: 18px;
+  letter-spacing: -0.01em;
+  text-decoration: none;
+  color: var(--ink);
+}
+.brand .dot {
+  width: 14px; height: 14px; border-radius: 50%;
+  background: linear-gradient(135deg, var(--brand-orange), var(--brand-purple));
+  display: inline-block;
+}
+.nav { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 14px; }
+.nav a { color: var(--ink-faint); text-decoration: none; }
+.nav a:hover { color: var(--accent); }
+
+/* ---- content card ---- */
+main {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 40px;
+  margin: 8px 0 48px;
+}
+@media (max-width: 640px) {
+  main { padding: 24px; }
+  body { font-size: 15px; }
+}
+
+h1 {
+  font-size: 30px;
+  line-height: 1.25;
+  letter-spacing: -0.02em;
+  margin: 0 0 6px;
+}
+.updated {
+  color: var(--ink-faint);
+  font-size: 13.5px;
+  margin: 0 0 28px;
+}
+h2 {
+  font-size: 20px;
+  letter-spacing: -0.01em;
+  margin: 34px 0 10px;
+  padding-top: 6px;
+}
+h3 { font-size: 16.5px; margin: 22px 0 8px; }
+p, li { color: var(--ink-soft); }
+ul, ol { padding-left: 22px; }
+li { margin: 6px 0; }
+a { color: var(--accent); }
+strong { color: var(--ink); }
+
+.lead { font-size: 17px; color: var(--ink-soft); }
+
+table.kv {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 14px 0;
+  font-size: 14.5px;
+}
+table.kv th, table.kv td {
+  text-align: left;
+  vertical-align: top;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+}
+table.kv th { width: 34%; background: #fafafc; color: var(--ink); font-weight: 600; }
+
+.callout {
+  border: 1px solid #f0d8a8;
+  background: #fdf6e8;
+  border-radius: 12px;
+  padding: 14px 16px;
+  font-size: 14px;
+  color: #6b5418;
+  margin: 18px 0;
+}
+.callout strong { color: #6b5418; }
+
+.toc { font-size: 14.5px; }
+.toc a { text-decoration: none; }
+.toc a:hover { text-decoration: underline; }
+
+footer.site {
+  border-top: 1px solid var(--line);
+  padding: 24px 0 60px;
+  font-size: 13px;
+  color: var(--ink-faint);
+}
+footer.site .wrap { display: flex; flex-wrap: wrap; gap: 6px 18px; justify-content: space-between; }
+footer.site a { color: var(--ink-faint); text-decoration: none; }
+footer.site a:hover { color: var(--accent); }
+
+/* Cards on the index page */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 14px;
+  margin-top: 8px;
+}
+.grid a {
+  display: block;
+  text-decoration: none;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 18px;
+  color: var(--ink);
+  transition: border-color .15s ease, transform .15s ease;
+}
+.grid a:hover { border-color: var(--accent); transform: translateY(-2px); }
+.grid h2 { margin: 0 0 4px; font-size: 16px; padding: 0; }
+.grid p { margin: 0; font-size: 13.5px; color: var(--ink-faint); }
