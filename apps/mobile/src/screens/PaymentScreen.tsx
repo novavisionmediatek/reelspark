@@ -1,181 +1,258 @@
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Image, Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Linking, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import * as ImagePicker from 'expo-image-picker';
 import { Feather } from '@expo/vector-icons';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { Button } from '../components/Button';
-import { TextField } from '../components/TextField';
-import { PaymentQrCode } from '../components/PaymentQrCode';
 import { useAuth } from '../lib/AuthProvider';
 import { useAppSettings } from '../hooks/useAppSettings';
-import { useRegistrationPayment, useSubmitRegistrationPayment } from '../hooks/useRegistrationPayment';
+import {
+  isConfirming,
+  useReconcilePayment,
+  useRegistrationPayment,
+  usePayWithRazorpay,
+} from '../hooks/useRegistrationPayment';
 import { colors, fonts, radius, spacing, type } from '../theme/tokens';
 import type { MainStackParamList } from '../navigation/types';
 
 type Props = NativeStackScreenProps<MainStackParamList, 'Payment'>;
 
+const DAY_MS = 86_400_000;
+const RENEW_WINDOW_MS = 30 * DAY_MS;
+
+function formatDate(iso: string) {
+  return new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+function payErrorMessage(raw: string) {
+  switch (raw) {
+    case 'membership_active':
+      return 'Your membership is already active.';
+    case 'too_many_attempts':
+      return 'Too many attempts — wait a few minutes and try again.';
+    case 'razorpay_order_failed':
+    case 'start_payment_failed':
+      return "Couldn't start the payment. Please try again.";
+    default:
+      return raw || 'Something went wrong. Please try again.';
+  }
+}
+
 export function PaymentScreen({ navigation }: Props) {
   const { profile, refreshProfile } = useAuth();
   const { settings } = useAppSettings();
-  const { data: payment, isLoading } = useRegistrationPayment();
-  const submitPayment = useSubmitRegistrationPayment();
+  const { data: payment } = useRegistrationPayment();
+  const pay = usePayWithRazorpay();
+  const reconcile = useReconcilePayment();
 
-  const [utr, setUtr] = useState('');
-  const [screenshotUri, setScreenshotUri] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState(false);
 
   const fee = settings.registration_fee_inr;
   const status = profile?.payment_status ?? 'unpaid';
+  const paidUntilIso = profile?.paid_until ?? null;
+  const paidUntilMs = paidUntilIso ? new Date(paidUntilIso).getTime() : null;
+  const now = Date.now();
 
-  // Bridge the polled payment row to the profile gate.
+  // "Approved with no expiry on file" is treated as active (legacy safety) —
+  // the migration backfills paid_until, so in practice it's always set.
+  const membershipActive = status === 'approved' && (paidUntilMs === null || paidUntilMs > now);
+  const membershipExpired = status === 'approved' && paidUntilMs !== null && paidUntilMs <= now;
+  const expiringSoon = membershipActive && paidUntilMs !== null && paidUntilMs - now < RENEW_WINDOW_MS;
+
+  // A confirmed payment (webhook or callback) flips profile.payment_status to
+  // 'approved'; the 15s poll on the payment row + AuthProvider.refreshProfile
+  // (fired from usePayWithRazorpay.onSuccess) bring it in without a reload.
+  // `confirming` = a pay attempt this session whose verify call didn't confirm;
+  // isConfirming() also covers a fresh 'created' row after a reload mid-payment.
+  const showConfirming = !membershipActive && !membershipExpired && (confirming || isConfirming(payment));
+
+  useEffect(() => {
+    if (membershipActive) setConfirming(false);
+  }, [membershipActive]);
+
+  // Safety net: if the webhook hasn't confirmed within ~90s, drop the local
+  // "confirming" flag so the user isn't stuck (isConfirming(payment) still keeps
+  // the state up while a fresh 'created' row is genuinely mid-flight).
+  useEffect(() => {
+    if (!confirming) return;
+    const t = setTimeout(() => setConfirming(false), 90_000);
+    return () => clearTimeout(t);
+  }, [confirming]);
+
+  // Webhook-only confirmation path: the 15s poll picks up the payment row going
+  // 'approved' before anything re-reads the profile — bridge it to the gate.
   useEffect(() => {
     if (payment?.status === 'approved' && status !== 'approved') refreshProfile();
   }, [payment?.status, status, refreshProfile]);
 
-  async function handlePickScreenshot() {
-    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!permission.granted) return;
-
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      quality: 0.8,
-    });
-    if (!result.canceled && result.assets[0]) {
-      setScreenshotUri(result.assets[0].uri);
-    }
-  }
-
-  async function copyUpiId() {
-    try {
-      await navigator.clipboard.writeText(settings.upi_id);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      /* clipboard unavailable */
-    }
-  }
-
-  async function handleSubmit() {
+  async function handlePay() {
     setError(null);
-    if (!utr.trim() || !screenshotUri) return;
     try {
-      await submitPayment.mutateAsync({ utr: utr.trim(), screenshotUri });
+      const outcome = await pay.mutateAsync();
+      if (outcome === 'pending_webhook') setConfirming(true);
     } catch (e) {
-      setError((e as Error)?.message ?? 'Could not submit your payment. Please try again.');
+      const msg = (e as Error)?.message ?? '';
+      if (msg !== 'cancelled') setError(payErrorMessage(msg));
     }
   }
 
-  // ---- approved -------------------------------------------------------
-  if (status === 'approved') {
+  // "Check again" on the confirming screen — reconcile against Razorpay's API.
+  async function handleRecheck() {
+    setError(null);
+    try {
+      const r = await reconcile.mutateAsync();
+      if (r.status !== 'approved') {
+        setError('Payment not confirmed yet. If you completed it, wait a moment and try again.');
+      }
+    } catch (e) {
+      setError(payErrorMessage((e as Error)?.message ?? ''));
+    }
+  }
+
+  // ---- active membership --------------------------------------------
+  if (membershipActive) {
     return (
       <SafeAreaView style={styles.screen}>
         <View style={styles.centerCard}>
           <View style={[styles.iconCircle, { backgroundColor: 'rgba(125,39,227,0.18)' }]}>
             <Feather name="check-circle" size={26} color={colors.purple} />
           </View>
-          <Text style={styles.cardTitle}>Registration approved</Text>
-          <Text style={styles.cardBody}>You're all set — you can now submit your Shorts and Reels.</Text>
-          <Button label="Go to Submit" onPress={() => navigation.navigate('Tabs', { screen: 'Submit' })} style={{ marginTop: spacing.lg }} />
+          <Text style={styles.cardTitle}>Membership active</Text>
+          <Text style={styles.cardBody}>
+            {paidUntilIso
+              ? `You can submit Shorts and Reels until ${formatDate(paidUntilIso)}.`
+              : 'You can submit your Shorts and Reels.'}
+          </Text>
+          {expiringSoon ? (
+            <>
+              {error ? <Text style={styles.error}>{error}</Text> : null}
+              <Button
+                label={pay.isPending ? 'Opening…' : `Renew for ₹${fee}/year`}
+                onPress={handlePay}
+                disabled={pay.isPending}
+                loading={pay.isPending}
+                style={{ marginTop: spacing.lg }}
+              />
+              <Button
+                label="Go to Submit"
+                variant="secondary"
+                onPress={() => navigation.navigate('Tabs', { screen: 'Submit' })}
+              />
+            </>
+          ) : (
+            <Button
+              label="Go to Submit"
+              onPress={() => navigation.navigate('Tabs', { screen: 'Submit' })}
+              style={{ marginTop: spacing.lg }}
+            />
+          )}
         </View>
       </SafeAreaView>
     );
   }
 
-  // ---- submitted / pending (manual admin review) ----------------------
-  if (!isLoading && payment?.status === 'submitted') {
+  // ---- expired — renew --------------------------------------------
+  if (membershipExpired) {
+    return (
+      <SafeAreaView style={styles.screen}>
+        <View style={styles.centerCard}>
+          <View style={[styles.iconCircle, { backgroundColor: 'rgba(254,73,64,0.14)' }]}>
+            <Feather name="alert-circle" size={26} color={colors.coral} />
+          </View>
+          <Text style={styles.cardTitle}>Membership expired</Text>
+          <Text style={styles.cardBody}>
+            {paidUntilIso ? `Your membership expired on ${formatDate(paidUntilIso)}. ` : ''}
+            Renew for ₹{fee}/year to keep posting Shorts and Reels.
+          </Text>
+          {error ? <Text style={styles.error}>{error}</Text> : null}
+          <Button
+            label={pay.isPending ? 'Opening…' : `Renew for ₹${fee}/year`}
+            onPress={handlePay}
+            disabled={pay.isPending}
+            loading={pay.isPending}
+            style={{ marginTop: spacing.lg }}
+          />
+          <Button label="Back" variant="ghost" onPress={() => navigation.goBack()} />
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  // ---- confirming (payment made, waiting on verification) ----------
+  if (showConfirming) {
     return (
       <SafeAreaView style={styles.screen}>
         <View style={styles.centerCard}>
           <View style={[styles.iconCircle, { backgroundColor: 'rgba(219,50,147,0.18)' }]}>
             <ActivityIndicator color={colors.magenta} />
           </View>
-          <Text style={styles.cardTitle}>Waiting for approval</Text>
+          <Text style={styles.cardTitle}>Confirming your payment…</Text>
           <Text style={styles.cardBody}>
-            We're verifying your ₹{payment.amount_inr} payment (ref. {payment.upi_reference}). This page updates
-            automatically once an admin confirms it.
+            This usually takes a few seconds and updates on its own. If you already paid, tap “Check again”.
+            If your payment didn’t go through, you can pay again.
           </Text>
-          <Button label="Back" variant="secondary" onPress={() => navigation.goBack()} style={{ marginTop: spacing.lg }} />
+          {error ? <Text style={styles.error}>{error}</Text> : null}
+          <Button
+            label={reconcile.isPending ? 'Checking…' : 'Check again'}
+            onPress={handleRecheck}
+            disabled={reconcile.isPending || pay.isPending}
+            loading={reconcile.isPending}
+            style={{ marginTop: spacing.lg }}
+          />
+          <Button
+            label={pay.isPending ? 'Opening…' : `Pay ₹${fee} again`}
+            variant="secondary"
+            onPress={handlePay}
+            disabled={pay.isPending || reconcile.isPending}
+          />
+          <Button label="Back" variant="ghost" onPress={() => navigation.goBack()} />
         </View>
       </SafeAreaView>
     );
   }
 
-  // ---- unpaid / rejected — show the QR + proof form -------------------
+  // ---- unpaid / rejected — pay --------------------------------------
   const rejected = payment?.status === 'rejected';
   const referred = !!profile?.referred_by;
-  const canSubmit = utr.trim().length > 0 && !!screenshotUri;
 
   return (
     <SafeAreaView style={styles.screen}>
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.header}>
-          <Text style={styles.title}>Complete registration</Text>
+          <Text style={styles.title}>Activate your membership</Text>
           <Text style={styles.subtitle}>
-            A one-time ₹{fee} fee unlocks video posting. Scan the QR with any UPI app, then tell us your transaction
-            reference and attach a screenshot — an admin confirms it and posting unlocks right after.
+            A ₹{fee}/year membership unlocks video posting. Pay securely with UPI, cards, net-banking or wallets
+            via Razorpay — access is granted the moment the payment is confirmed.
           </Text>
         </View>
 
         {referred ? (
           <View style={styles.referralBox}>
             <Text style={styles.referralBoxTitle}>
-              🎉 Congrats! You’ve got ₹{settings.referral_bonus_inr} on your referral
+              🎉 Your friend earns ₹{settings.referral_bonus_inr} when you join
             </Text>
             <Text style={styles.referralBoxNote}>
-              You joined with a friend’s code. Complete your ₹{fee} registration below to lock it in.
+              You signed up with a referral code — complete your ₹{fee}/year registration below to lock it in.
             </Text>
           </View>
         ) : null}
 
         {rejected && payment ? (
           <View style={styles.rejectedBox}>
-            <Text style={styles.rejectedTitle}>Previous payment was rejected</Text>
+            <Text style={styles.rejectedTitle}>Previous payment was reversed</Text>
             {payment.admin_note ? <Text style={styles.rejectedNote}>“{payment.admin_note}”</Text> : null}
-            <Text style={styles.rejectedNote}>You can retry the payment below.</Text>
+            <Text style={styles.rejectedNote}>You can pay again below.</Text>
           </View>
         ) : null}
 
-        <View style={styles.qrCard}>
-          <Text style={styles.payLabel}>Scan to pay</Text>
-          <Text style={styles.amount}>₹{fee}</Text>
-          <PaymentQrCode upiId={settings.upi_id} payeeName={settings.upi_payee_name} amountInr={fee} />
-          <Pressable style={styles.upiRow} onPress={copyUpiId} hitSlop={8}>
-            <Text style={styles.upiId}>{settings.upi_id}</Text>
-            <Feather name={copied ? 'check' : 'copy'} size={14} color={copied ? colors.purple : colors.textMuted} />
-          </Pressable>
-        </View>
-
-        <Text style={styles.label}>Transaction reference (UTR)</Text>
-        <TextField
-          value={utr}
-          onChangeText={setUtr}
-          placeholder="e.g. 402816734521"
-          autoCapitalize="characters"
-        />
-
-        <Text style={styles.label}>Payment screenshot</Text>
-        <Pressable style={styles.screenshotPicker} onPress={handlePickScreenshot}>
-          {screenshotUri ? (
-            <Image source={{ uri: screenshotUri }} style={styles.screenshotPreview} />
-          ) : (
-            <View style={styles.screenshotPlaceholder}>
-              <Feather name="image" size={20} color={colors.textMuted} />
-              <Text style={styles.screenshotHint}>Tap to attach a screenshot</Text>
-            </View>
-          )}
-        </Pressable>
-
-        {(error || submitPayment.isError) ? (
-          <Text style={styles.error}>{error ?? (submitPayment.error as Error)?.message}</Text>
-        ) : null}
+        {error ? <Text style={styles.error}>{error}</Text> : null}
 
         <Button
-          label={submitPayment.isPending ? 'Submitting…' : 'Submit for verification'}
-          onPress={handleSubmit}
-          disabled={!canSubmit || submitPayment.isPending}
-          loading={submitPayment.isPending}
+          label={pay.isPending ? 'Opening…' : `Pay ₹${fee}`}
+          onPress={handlePay}
+          disabled={pay.isPending}
+          loading={pay.isPending}
           style={{ marginTop: spacing.lg }}
         />
         <Button label="Cancel" variant="ghost" onPress={() => navigation.goBack()} />
@@ -224,46 +301,7 @@ const styles = StyleSheet.create({
   cardTitle: { ...type.h3, color: colors.text, textAlign: 'center' },
   cardBody: { ...type.bodySmall, color: colors.textMuted, textAlign: 'center', maxWidth: 320 },
 
-  qrCard: {
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.xl,
-    padding: spacing.xl,
-    alignItems: 'center',
-    gap: spacing.md,
-    marginBottom: spacing.lg,
-  },
-  payLabel: {
-    ...type.label,
-    color: colors.textMuted,
-    textTransform: 'uppercase',
-  },
-  amount: { fontFamily: fonts.monoSemibold, fontSize: 32, color: colors.text, marginTop: -spacing.xs },
-  upiRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
-  upiId: { fontFamily: fonts.mono, fontSize: 13, color: colors.text },
-
-  label: {
-    ...type.label,
-    color: colors.textMuted,
-    textTransform: 'uppercase',
-    marginBottom: spacing.xs,
-    marginTop: spacing.sm,
-  },
-
-  screenshotPicker: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderStyle: 'dashed',
-    borderRadius: radius.md,
-    overflow: 'hidden',
-    backgroundColor: colors.surface,
-  },
-  screenshotPlaceholder: { alignItems: 'center', justifyContent: 'center', gap: spacing.xs, paddingVertical: spacing['2xl'] },
-  screenshotHint: { ...type.bodySmall, color: colors.textMuted },
-  screenshotPreview: { width: '100%', height: 220, resizeMode: 'contain', backgroundColor: colors.background },
-
-  error: { ...type.bodySmall, color: colors.coral, marginTop: spacing.sm },
+  error: { ...type.bodySmall, color: colors.coral, marginTop: spacing.sm, textAlign: 'center' },
 
   legalRow: {
     flexDirection: 'row',

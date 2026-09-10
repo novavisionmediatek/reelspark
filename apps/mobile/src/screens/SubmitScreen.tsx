@@ -17,16 +17,26 @@ import type { MainStackParamList } from '../navigation/types';
 const EXAMPLE_URL = 'https://youtube.com/shorts/9kLmR2vTqXo';
 
 const GATE_COPY: Record<string, string> = {
-  unpaid: 'Pay the one-time registration fee to unlock video posting.',
-  submitted: 'Your payment is in review — an admin will approve it shortly.',
-  rejected: 'Your last payment was rejected. Open registration to resubmit.',
+  unpaid: 'Activate your yearly membership to unlock video posting.',
+  rejected: 'Your last payment was reversed. Open registration to pay again.',
+  expired: 'Your membership has expired. Renew it to keep posting.',
 };
+
+// Membership is "active" only when the payment is approved AND still inside the
+// paid year (paid_until in the future). paid_until null = legacy approved row.
+function membershipIsActive(profile: { payment_status: string; paid_until: string | null } | null) {
+  if (!profile || profile.payment_status !== 'approved') return false;
+  return !profile.paid_until || new Date(profile.paid_until).getTime() > Date.now();
+}
 
 function PaymentGate() {
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const { profile } = useAuth();
   const { settings } = useAppSettings();
   const status = profile?.payment_status ?? 'unpaid';
+  const paidUntilMs = profile?.paid_until ? new Date(profile.paid_until).getTime() : null;
+  const expired = status === 'approved' && paidUntilMs !== null && paidUntilMs <= Date.now();
+  const key = expired ? 'expired' : status === 'rejected' ? 'rejected' : 'unpaid';
 
   return (
     <SafeAreaView style={styles.screen}>
@@ -34,10 +44,12 @@ function PaymentGate() {
         <View style={styles.gateIcon}>
           <Feather name="loader" size={22} color={colors.pink} />
         </View>
-        <Text style={styles.gateTitle}>Complete your ₹{settings.registration_fee_inr} registration</Text>
-        <Text style={styles.gateBody}>{GATE_COPY[status] ?? GATE_COPY.unpaid}</Text>
+        <Text style={styles.gateTitle}>
+          {expired ? 'Renew your membership' : `Activate your ₹${settings.registration_fee_inr}/year membership`}
+        </Text>
+        <Text style={styles.gateBody}>{GATE_COPY[key]}</Text>
         <Button
-          label={status === 'submitted' ? 'View payment status' : 'Complete registration'}
+          label={expired ? 'Renew membership' : 'Activate membership'}
           onPress={() => navigation.navigate('Payment')}
           style={{ marginTop: spacing.lg }}
         />
@@ -49,7 +61,7 @@ function PaymentGate() {
 export function SubmitScreen() {
   const { profile } = useAuth();
 
-  if (profile && profile.payment_status !== 'approved') {
+  if (profile && !membershipIsActive(profile)) {
     return <PaymentGate />;
   }
   return <SubmitForm />;

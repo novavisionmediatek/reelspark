@@ -2,7 +2,7 @@ export type Platform = 'youtube' | 'instagram';
 export type VideoStatus = 'pending' | 'approved' | 'rejected' | 'flagged';
 export type ReportStatus = 'open' | 'reviewed' | 'dismissed';
 export type PaymentStatus = 'unpaid' | 'submitted' | 'approved' | 'rejected';
-export type RegistrationPaymentStatus = 'submitted' | 'approved' | 'rejected';
+export type RegistrationPaymentStatus = 'created' | 'submitted' | 'approved' | 'rejected';
 export type ReferralWithdrawalStatus = 'paid' | 'failed' | 'reversed';
 
 export interface Profile {
@@ -19,6 +19,8 @@ export interface Profile {
   banned_reason: string | null;
   banned_at: string | null;
   payment_status: PaymentStatus;
+  // End of the paid membership year (ISO); null = never paid.
+  paid_until: string | null;
   referral_code: string;
   referred_by: string | null;
   referral_balance_inr: number;
@@ -30,16 +32,20 @@ export interface RegistrationPayment {
   id: string;
   user_id: string;
   amount_inr: number;
+  // Legacy manual-UPI columns — null on Razorpay rows.
   upi_reference: string | null;
   screenshot_path: string | null;
   status: RegistrationPaymentStatus;
+  razorpay_order_id: string | null;
+  razorpay_payment_id: string | null;
+  razorpay_signature: string | null;
   reviewed_by: string | null;
   reviewed_at: string | null;
   admin_note: string | null;
   created_at: string;
   updated_at: string;
   // joined
-  user?: Pick<Profile, 'id' | 'display_name' | 'email' | 'referred_by'> | null;
+  user?: Pick<Profile, 'id' | 'display_name' | 'email' | 'referred_by' | 'paid_until'> | null;
 }
 
 export interface ReferralEarning {
@@ -72,8 +78,11 @@ export interface AppSettings {
   registration_fee_inr: number;
   referral_bonus_inr: number;
   min_referral_withdrawal_inr: number;
-  upi_id: string;
-  upi_payee_name: string;
+  // Publishable Razorpay key id (rzp_test_* / rzp_live_*). '' until an admin sets it.
+  razorpay_key_id: string;
+  // Legacy manual-UPI fields — still the referral-withdrawal payout destination.
+  upi_id?: string;
+  upi_payee_name?: string;
   updated_at: string;
 }
 
