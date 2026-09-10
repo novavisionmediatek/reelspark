@@ -103,7 +103,11 @@ export function usePayWithRazorpay() {
           currency: order.currency,
           name: 'ReelSpark',
           description: `Annual membership (₹${order.registrationFeeInr}/year)`,
-          image: typeof window !== 'undefined' ? `${window.location.origin}/favicon.png` : undefined,
+          // Only a public HTTPS URL — a localhost favicon trips up Checkout.
+          image:
+            typeof window !== 'undefined' && window.location.protocol === 'https:'
+              ? `${window.location.origin}/favicon.png`
+              : undefined,
           prefill: {
             name: profile?.display_name ?? undefined,
             email: profile?.email ?? undefined,
@@ -118,7 +122,21 @@ export function usePayWithRazorpay() {
               razorpay_signature: resp.razorpay_signature,
             })
               .then(() => finish(() => resolve('verified')))
-              .catch(() => finish(() => resolve('pending_webhook')));
+              .catch(async (verifyErr) => {
+                // Payment succeeded at Razorpay but our signature-verify call
+                // didn't confirm. Fall back to reconciling against Razorpay's
+                // API directly (works with no webhook configured).
+                console.error('[razorpay] verify-payment failed, reconciling:', verifyErr);
+                try {
+                  const r = await invokeFn<{ status: string }>('razorpay-reconcile-payment', {
+                    razorpay_order_id: resp.razorpay_order_id,
+                  });
+                  finish(() => resolve(r.status === 'approved' ? 'verified' : 'pending_webhook'));
+                } catch (reconcileErr) {
+                  console.error('[razorpay] reconcile failed:', reconcileErr);
+                  finish(() => resolve('pending_webhook'));
+                }
+              });
           },
           modal: { ondismiss: () => finish(() => reject(new Error('cancelled'))) },
         });
@@ -128,6 +146,25 @@ export function usePayWithRazorpay() {
         });
       });
     },
+    onSuccess: async () => {
+      await refreshProfile();
+      queryClient.invalidateQueries({ queryKey: ['registrationPayment', session?.user.id] });
+    },
+  });
+}
+
+export interface ReconcileResult {
+  status: 'approved' | 'pending' | 'none';
+}
+
+// "Check again" on the confirming screen: asks the server to reconcile the
+// latest unconfirmed payment against Razorpay's API and confirm it if paid.
+export function useReconcilePayment() {
+  const queryClient = useQueryClient();
+  const { session, refreshProfile } = useAuth();
+
+  return useMutation<ReconcileResult, Error, void>({
+    mutationFn: () => invokeFn<ReconcileResult>('razorpay-reconcile-payment', {}),
     onSuccess: async () => {
       await refreshProfile();
       queryClient.invalidateQueries({ queryKey: ['registrationPayment', session?.user.id] });

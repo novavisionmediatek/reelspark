@@ -36,6 +36,27 @@ export async function createOrder(opts: {
   return await res.json() as RazorpayOrder;
 }
 
+export interface RazorpayPaymentEntity {
+  id: string;
+  status: "created" | "authorized" | "captured" | "refunded" | "failed" | string;
+  order_id: string;
+  amount: number;
+}
+
+/** GET /orders/{id}/payments — used to reconcile when the webhook/callback didn't land. */
+export async function fetchOrderPayments(orderId: string): Promise<RazorpayPaymentEntity[]> {
+  const auth = btoa(`${need("RAZORPAY_KEY_ID")}:${need("RAZORPAY_KEY_SECRET")}`);
+  const res = await fetch(`${RAZORPAY_API}/orders/${orderId}/payments`, {
+    headers: { Authorization: `Basic ${auth}` },
+  });
+  if (!res.ok) {
+    console.error("razorpay fetchOrderPayments failed", res.status, await res.text());
+    throw new Error("razorpay_fetch_failed");
+  }
+  const body = await res.json() as { items?: RazorpayPaymentEntity[] };
+  return body.items ?? [];
+}
+
 async function hmacSha256Hex(secret: string, message: string): Promise<string> {
   const key = await crypto.subtle.importKey(
     "raw",

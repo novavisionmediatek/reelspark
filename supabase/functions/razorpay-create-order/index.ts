@@ -83,6 +83,15 @@ Deno.serve(async (req: Request): Promise<Response> => {
       throw new HttpError(500, "start_payment_failed");
     }
 
+    console.log(
+      "razorpay order created",
+      order.id,
+      "key",
+      need("RAZORPAY_KEY_ID").slice(0, 12),
+      "amount",
+      amountPaise,
+    );
+
     return jsonResponse(req, {
       orderId: order.id,
       amount: amountPaise,

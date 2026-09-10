@@ -6,7 +6,12 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { Button } from '../components/Button';
 import { useAuth } from '../lib/AuthProvider';
 import { useAppSettings } from '../hooks/useAppSettings';
-import { isConfirming, useRegistrationPayment, usePayWithRazorpay } from '../hooks/useRegistrationPayment';
+import {
+  isConfirming,
+  useReconcilePayment,
+  useRegistrationPayment,
+  usePayWithRazorpay,
+} from '../hooks/useRegistrationPayment';
 import { colors, fonts, radius, spacing, type } from '../theme/tokens';
 import type { MainStackParamList } from '../navigation/types';
 
@@ -38,6 +43,7 @@ export function PaymentScreen({ navigation }: Props) {
   const { settings } = useAppSettings();
   const { data: payment } = useRegistrationPayment();
   const pay = usePayWithRazorpay();
+  const reconcile = useReconcilePayment();
 
   const [error, setError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
@@ -88,6 +94,19 @@ export function PaymentScreen({ navigation }: Props) {
     } catch (e) {
       const msg = (e as Error)?.message ?? '';
       if (msg !== 'cancelled') setError(payErrorMessage(msg));
+    }
+  }
+
+  // "Check again" on the confirming screen — reconcile against Razorpay's API.
+  async function handleRecheck() {
+    setError(null);
+    try {
+      const r = await reconcile.mutateAsync();
+      if (r.status !== 'approved') {
+        setError('Payment not confirmed yet. If you completed it, wait a moment and try again.');
+      }
+    } catch (e) {
+      setError(payErrorMessage((e as Error)?.message ?? ''));
     }
   }
 
@@ -170,9 +189,24 @@ export function PaymentScreen({ navigation }: Props) {
           </View>
           <Text style={styles.cardTitle}>Confirming your payment…</Text>
           <Text style={styles.cardBody}>
-            This usually takes a few seconds. This page updates automatically once the payment is confirmed.
+            This usually takes a few seconds and updates on its own. If you already paid, tap “Check again”.
+            If your payment didn’t go through, you can pay again.
           </Text>
-          <Button label="Back" variant="secondary" onPress={() => navigation.goBack()} style={{ marginTop: spacing.lg }} />
+          {error ? <Text style={styles.error}>{error}</Text> : null}
+          <Button
+            label={reconcile.isPending ? 'Checking…' : 'Check again'}
+            onPress={handleRecheck}
+            disabled={reconcile.isPending || pay.isPending}
+            loading={reconcile.isPending}
+            style={{ marginTop: spacing.lg }}
+          />
+          <Button
+            label={pay.isPending ? 'Opening…' : `Pay ₹${fee} again`}
+            variant="secondary"
+            onPress={handlePay}
+            disabled={pay.isPending || reconcile.isPending}
+          />
+          <Button label="Back" variant="ghost" onPress={() => navigation.goBack()} />
         </View>
       </SafeAreaView>
     );
