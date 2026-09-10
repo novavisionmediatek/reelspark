@@ -150,9 +150,23 @@ function FeedItem({ video, isActive, itemHeight, desktop, soundOn, onToggleSound
     if (isActive && isInstagram) countView();
   }, [isActive, isInstagram, countView]);
 
-  const togglePlay = useCallback(() => {
-    setPlaying((p) => !p);
-  }, []);
+  // Tapping our poster only ever STARTS playback — it must not toggle. While the
+  // embed is still loading (`playing` true, `started` not yet confirmed) the
+  // play button is still on screen; a second, impatient tap used to flip
+  // `playing` back to false, unmounting the half-loaded iframe and forcing the
+  // whole load to restart from zero — so the reel felt like it "wouldn't play".
+  // Pause/resume is the iframe's own tap layer's job once playback is running.
+  const startPlay = useCallback(() => setPlaying(true), []);
+
+  // Watchdog: if a tapped reel never reports real playback (blocked YouTube API,
+  // dead embed, stalled network), fall back to the poster after a few seconds so
+  // the viewer can tap again instead of staring at a spinner forever. Clears the
+  // moment playback actually starts, or the reel scrolls out of view.
+  useEffect(() => {
+    if (isInstagram || !playing || started) return;
+    const timer = setTimeout(() => setPlaying(false), 12000);
+    return () => clearTimeout(timer);
+  }, [isInstagram, playing, started]);
 
   const handleEnded = useCallback(() => {
     setPlaying(false);
@@ -255,10 +269,16 @@ function FeedItem({ video, isActive, itemHeight, desktop, soundOn, onToggleSound
           Instagram: the reel is already mounted, so the single tap lands on
           IG's own control — no app play button. */}
       {showChrome && !isInstagram ? (
-        <Pressable style={StyleSheet.absoluteFill} onPress={togglePlay} accessibilityLabel="Play video">
+        <Pressable style={StyleSheet.absoluteFill} onPress={startPlay} accessibilityLabel="Play video">
           <View style={styles.playButtonWrap} pointerEvents="none">
             <View style={styles.playButton}>
-              <Feather name="play" size={30} color="#fff" fill="#fff" style={{ marginLeft: 4 }} />
+              {playing ? (
+                // Tapped — embed is mounting/buffering. Show a spinner so the tap
+                // registers immediately instead of the button looking inert.
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Feather name="play" size={30} color="#fff" fill="#fff" style={{ marginLeft: 4 }} />
+              )}
             </View>
           </View>
         </Pressable>
@@ -363,6 +383,35 @@ export function FeedScreen() {
       }
       return next;
     });
+  }, []);
+
+  // A YouTube reel doesn't mount its iframe until the viewer taps play, and the
+  // slowest part of "tap → first frame" is that iframe then fetching YouTube's
+  // IFrame API + opening fresh connections to youtube.com/ytimg.com. Warm both
+  // once, up front: preconnect the hosts and prefetch the API script into the
+  // HTTP cache so the first tapped reel starts as close to instantly as the
+  // network allows. Web-only; harmless if these hints are ignored.
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const hints: Array<{ rel: string; href: string; as?: string }> = [
+      { rel: 'preconnect', href: 'https://www.youtube.com' },
+      { rel: 'preconnect', href: 'https://i.ytimg.com' },
+      { rel: 'preconnect', href: 'https://s.ytimg.com' },
+      { rel: 'preconnect', href: 'https://www.google.com' },
+      { rel: 'preconnect', href: 'https://googleads.g.doubleclick.net' },
+      { rel: 'prefetch', href: 'https://www.youtube.com/iframe_api', as: 'script' },
+    ];
+    const added = hints.map(({ rel, href, as }) => {
+      const link = document.createElement('link');
+      link.rel = rel;
+      link.href = href;
+      // No crossorigin: the embed pulls the IFrame API as a plain no-cors
+      // <script>, so a warmed anonymous-CORS connection/entry wouldn't be reused.
+      if (as) link.as = as;
+      document.head.appendChild(link);
+      return link;
+    });
+    return () => added.forEach((link) => link.remove());
   }, []);
 
   // Each feed item is exactly as tall as the visible feed area (the scene minus
